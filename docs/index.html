@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Diana - a League of Legends bot for your friend group</title>
+        <meta
+            name="description"
+            content="A free Discord bot that keeps a shared record of the games your friend group plays together. Companion apps track a player. Diana tracks a group."
+        />
+        <style>
+            :root {
+                color-scheme: light dark;
+                --accent: #4a7dbd;
+            }
+            body {
+                font-family:
+                    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+                    Helvetica, Arial, sans-serif;
+                line-height: 1.6;
+                max-width: 720px;
+                margin: 0 auto;
+                padding: 2rem 1.25rem 4rem;
+            }
+            h1 {
+                margin-bottom: 0.25rem;
+                font-size: 2.25rem;
+            }
+            .tagline {
+                color: gray;
+                margin-top: 0;
+                font-size: 1.15rem;
+            }
+            a {
+                color: var(--accent);
+            }
+            .cta {
+                display: inline-block;
+                margin: 1.5rem 0 0.5rem;
+                padding: 0.75rem 1.5rem;
+                background: var(--accent);
+                color: #fff;
+                text-decoration: none;
+                border-radius: 6px;
+                font-weight: 600;
+            }
+            .cta:hover {
+                opacity: 0.9;
+            }
+            .cta-note {
+                font-size: 0.9rem;
+                color: gray;
+                margin-top: 0.25rem;
+            }
+            h2 {
+                margin-top: 2.5rem;
+                font-size: 1.3rem;
+            }
+            .cmd {
+                font-family:
+                    ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                font-size: 0.95em;
+                background: rgba(128, 128, 128, 0.15);
+                padding: 0.1rem 0.4rem;
+                border-radius: 4px;
+            }
+            ul {
+                padding-left: 1.2rem;
+            }
+            li {
+                margin-bottom: 0.6rem;
+            }
+            .links {
+                margin-top: 2.5rem;
+                padding-top: 1.5rem;
+                border-top: 1px solid rgba(128, 128, 128, 0.3);
+            }
+            footer {
+                margin-top: 2.5rem;
+                font-size: 0.85rem;
+                color: gray;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Diana</h1>
+        <p class="tagline">
+            A free Discord bot that remembers every game your friend group has
+            played together.
+        </p>
+
+        <p>
+            Companion apps track a player. Diana tracks a <strong>group</strong>
+            - the three to eight people who queue together on a Tuesday night,
+            in one private server. Add each other once, and Diana keeps the
+            record: every match, every promotion, every streak, and a Sunday
+            digest of who climbed and who did not.
+        </p>
+
+        <a
+            class="cta"
+            href="https://discord.com/oauth2/authorize?client_id=1327445461107347567"
+            >Add Diana to your server</a
+        >
+        <p class="cta-note">Free. No paid tier, no ads.</p>
+
+        <h2>What it does</h2>
+        <ul>
+            <li>
+                <strong>Match summaries.</strong> When a tracked player finishes
+                a game, Diana posts it: result, champion, queue, role, KDA,
+                damage, CS, vision - and the LP change if it was ranked.
+            </li>
+            <li>
+                <strong>Rank tracking.</strong> Promotions, demotions, new
+                personal bests and win streaks, from a rank history Diana builds
+                itself, match by match.
+            </li>
+            <li>
+                <strong>A Sunday digest.</strong> The group's week in one post -
+                who climbed, who fell, who played the most games for the least
+                reward.
+            </li>
+            <li>
+                <strong>Questions only a group can ask.</strong>
+                <span class="cmd">/compare</span> for head-to-head,
+                <span class="cmd">/leaderboard</span> for the server ladder,
+                <span class="cmd">/champion</span> for form on a pick, and duo
+                win rates for when two of you queue together.
+            </li>
+            <li>
+                <strong><span class="cmd">/livegame</span></strong> - is someone
+                in a game right now? Champions, teams and bans, so the rest of
+                you can spectate.
+            </li>
+        </ul>
+
+        <h2>Getting started</h2>
+        <ul>
+            <li>Add Diana to your server with the button above.</li>
+            <li>
+                <span class="cmd">/setchannel</span> - pick where Diana posts.
+            </li>
+            <li>
+                <span class="cmd">/add name tag</span> - start tracking a
+                summoner. Repeat for each of you.
+            </li>
+            <li>
+                That's it. <span class="cmd">/help</span> lists everything else.
+            </li>
+        </ul>
+
+        <p>
+            Diana reads no message content and no member data. Everything it
+            stores, and how to remove it, is described in the privacy policy.
+        </p>
+
+        <div class="links">
+            <p>
+                <a href="privacy.html">Privacy Policy</a> ·
+                <a href="terms.html">Terms of Use</a> ·
+                <a href="https://github.com/louissullivan4/diana"
+                    >Source on GitHub</a
+                >
+                ·
+                <a href="https://top.gg/bot/1327445461107347567">top.gg</a>
+            </p>
+        </div>
+
+        <footer>
+            <p>
+                Diana is an open-source community project. It is not endorsed by
+                Riot Games and does not reflect the views or opinions of Riot
+                Games or anyone officially involved in producing or managing
+                Riot Games properties. Riot Games and all associated properties
+                are trademarks or registered trademarks of Riot Games, Inc.
+            </p>
+        </footer>
+    </body>
+</html>

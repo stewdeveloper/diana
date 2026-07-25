@@ -1,0 +1,21 @@
+# GitHub Pages configuration
+#
+# Pages publishes this entire /docs directory. Anything left here is world-
+# readable at https://louissullivan4.github.io/diana/<filename> - including
+# .md files, which Jekyll copies through verbatim when they have no front
+# matter.
+#
+# The internal planning documents below are deliberately excluded. They contain
+# commercial strategy, pricing and unreleased plans, and this site is the
+# product URL given to Riot for verification.
+#
+# If you add another internal document to /docs, add it here too.
+
+exclude:
+    - new-design.md
+    - roadmap.md
+    - diana-roadmap.md
+    - riot-application.md
+    - development.md
+
+# Published: index.html, privacy.html, terms.html, riot.txt

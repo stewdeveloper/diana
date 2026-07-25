@@ -140,7 +140,7 @@ await loadPlugin(myPlugin.id);
 ```
 
 Slash commands are registered out-of-band in `apps/server/src/index.ts` via
-`registerSlashCommands(commands, botKey)` from `diana-discord` — there is no
+`registerSlashCommands(commands, botKey)` from `diana-discord` - there is no
 `PluginContext` method for them.
 
 See `packages/diana-core/src/plugins/diana-league-bot/` for a complete reference implementation.
