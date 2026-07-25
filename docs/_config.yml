@@ -14,8 +14,6 @@
 exclude:
     - new-design.md
     - roadmap.md
-    - diana-roadmap.md
-    - riot-application.md
     - development.md
 
 # Published: index.html, privacy.html, terms.html, riot.txt
