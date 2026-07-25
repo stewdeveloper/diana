@@ -1,3 +1,19 @@
+> # ⚠️ SUPERSEDED — kept for history
+>
+> **The current roadmap is [`roadmap.md`](roadmap.md).** The strategic argument behind the change is in [`new-design.md`](new-design.md).
+>
+> This document was superseded for three reasons:
+>
+> 1. **Phases 0 and 1 shipped in full** — commit `5630bb7` (PR #152), closing issues #113–#131. Everything in §3 and §4 below is done.
+> 2. **Its scope was too narrow.** It covers the League Discord bot alone. The sellable product is the intersection of Diana's match data and Meeps' voice presence, so the roadmap now covers both repositories as one programme.
+> 3. **§6.3 (match betting) cannot ship.** Riot's monetisation policy states that a product "cannot feature betting or gambling functionality." It has been deleted, not deferred — replaced by _Calls_ (`roadmap.md` §8.5), which keeps the social payoff and is idempotent by construction.
+>
+> Sections that remain accurate and were carried forward rather than rewritten: the **Riot rate-budget analysis** (§1, §10), the **traps** (§9, except #1 and #3), and the **implementer conventions** (§11).
+>
+> _Do not plan from this file._
+
+---
+
 # Diana Feature Roadmap
 
 _Scope: the **League of Legends Discord bot** (`diana-league-bot` plugin). The web dashboard and Pathfinder (Apex) are out of scope._

@@ -12,3 +12,4 @@ data/
 *.tsbuildinfo
 coverage/**
 .claude/
+CLAUDE.md
