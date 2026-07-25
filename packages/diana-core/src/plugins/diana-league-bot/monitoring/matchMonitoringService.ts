@@ -49,6 +49,8 @@ import { Summoner, LeagueBotConfig } from '../types';
 import { MatchV5DTOs } from 'twisted/dist/models-dto/matches/match-v5/match.dto';
 import { Constants } from 'twisted';
 import type { MessageAdapter } from '../../../core/pluginTypes';
+import type { EventAdapter } from '../../../core/eventTypes';
+import { buildMatchScopedEventId } from '../../../core/eventTypes';
 
 const lolService = createLolService();
 const shouldForceDevelopmentTimers = Boolean(
@@ -128,7 +130,8 @@ const syncTrackedSummonersWithDatabase = async (puuids: string[]) => {
 
 const checkAndHandleSummoner = async (
     summoner: Summoner,
-    messageAdapter: MessageAdapter | null | undefined
+    messageAdapter: MessageAdapter | null | undefined,
+    eventAdapter?: EventAdapter | null
 ) => {
     try {
         const recentMatches = await lolService.getMatchesByPUUID(
@@ -154,7 +157,8 @@ const checkAndHandleSummoner = async (
             await handleNewMatchCompleted(
                 summoner,
                 mostRecentMatchId,
-                messageAdapter
+                messageAdapter,
+                eventAdapter
             );
         } else {
             console.log(
@@ -171,7 +175,8 @@ const checkAndHandleSummoner = async (
 const handleNewMatchCompleted = async (
     summoner: Summoner,
     newMatchId: string,
-    messageAdapter: MessageAdapter | null | undefined
+    messageAdapter: MessageAdapter | null | undefined,
+    eventAdapter?: EventAdapter | null
 ) => {
     const { puuid, gameName: summonerName } = summoner;
 
@@ -586,12 +591,120 @@ const handleNewMatchCompleted = async (
         );
     }
 
+    // Structured events (DN-1).
+    //
+    // Emitted ONCE per match, deliberately outside the per-guild loop above:
+    // an event is a fact about the match, not about a Discord channel. Emitting
+    // inside the loop would send one duplicate per tracking guild (deduped by
+    // the receiver, but N pointless HTTP calls). It also means events are still
+    // captured for matches no guild is configured to post.
+    //
+    // Never allowed to break match posting - hence its own try/catch, and an
+    // adapter that does not throw.
+    try {
+        if (eventAdapter) {
+            const occurredAt = new Date(
+                info.gameStartTimestamp
+                    ? info.gameStartTimestamp + gameDuration * 1000
+                    : Date.now()
+            ).toISOString();
+
+            await eventAdapter.emit({
+                eventId: buildMatchScopedEventId(
+                    'match.completed',
+                    newMatchId,
+                    puuid
+                ),
+                type: 'match.completed',
+                occurredAt,
+                matchId: newMatchId,
+                puuid,
+                summonerName,
+                queueId: info.queueId ?? undefined,
+                queueName,
+                championName: champion,
+                role: getRoleNameTranslation(role),
+                result,
+                win: result === 'Win',
+                kills: participant?.kills ?? 0,
+                deaths: participant?.deaths ?? 0,
+                assists: participant?.assists ?? 0,
+                damage,
+                gameDurationSeconds: gameDuration,
+                aiScore: summonerAiScore,
+                placement: summonerPlacement,
+                totalPlayers: participants.length || undefined,
+                lpChange: lpChangeMsg,
+                rankAfter: newRankMsg,
+            });
+
+            if (checkForRankUp !== 'no_change') {
+                await eventAdapter.emit({
+                    eventId: buildMatchScopedEventId(
+                        'rank.changed',
+                        newMatchId,
+                        puuid
+                    ),
+                    type: 'rank.changed',
+                    occurredAt,
+                    matchId: newMatchId,
+                    puuid,
+                    summonerName,
+                    direction:
+                        checkForRankUp === 'promoted' ? 'promoted' : 'demoted',
+                    rankAfter: newRankMsg,
+                    lpChange: lpChangeMsg,
+                });
+            }
+
+            if (streakToAnnounce) {
+                await eventAdapter.emit({
+                    eventId: buildMatchScopedEventId(
+                        'streak',
+                        newMatchId,
+                        puuid
+                    ),
+                    type: 'streak',
+                    occurredAt,
+                    matchId: newMatchId,
+                    puuid,
+                    summonerName,
+                    kind: streakToAnnounce.kind,
+                    length: streakToAnnounce.length,
+                });
+            }
+
+            if (milestoneToAnnounce) {
+                await eventAdapter.emit({
+                    eventId: buildMatchScopedEventId(
+                        'milestone',
+                        newMatchId,
+                        puuid
+                    ),
+                    type: 'milestone',
+                    occurredAt,
+                    matchId: newMatchId,
+                    puuid,
+                    summonerName,
+                    milestone: milestoneToAnnounce,
+                    rankAfter: newRankMsg,
+                });
+            }
+        }
+    } catch (error) {
+        console.error(
+            `[Error] Failed to emit match events for ${summonerName}:`,
+            error
+        );
+    }
+
     await setSummonerCurrentMatchIdByPuuid(puuid, newMatchId);
 };
 
 export function createMatchMonitoringTick(
     config: LeagueBotConfig,
-    messageAdapter: MessageAdapter | null | undefined
+    messageAdapter: MessageAdapter | null | undefined,
+    eventAdapter?: EventAdapter | null
 ): () => Promise<void> {
     return async function runMatchMonitoringTick(): Promise<void> {
         if (process.env.STOP_BOT) {
@@ -619,7 +732,11 @@ export function createMatchMonitoringTick(
             for (const puuid of trackedPuuids) {
                 const summoner = await getSummonerByPuuid(puuid);
                 if (summoner) {
-                    await checkAndHandleSummoner(summoner, messageAdapter);
+                    await checkAndHandleSummoner(
+                        summoner,
+                        messageAdapter,
+                        eventAdapter
+                    );
                 } else {
                     console.log(
                         `[Info] [${new Date().toISOString()}] Player PUUID[${puuid}] was not found in database.`

@@ -138,7 +138,11 @@ Four cross-cutting changes that everything else hangs off. All four get harder e
 
 ### 5.1 Typed event bus (DN-1) - the keystone
 
-Today Diana serialises a `MessagePayload` and POSTs it to `/api/diana-notify`; Meeps writes it into a channel **as a message**. Meeps therefore has no structured knowledge of anything Diana knows. Every joint feature in §7 is blocked by exactly this.
+Today Diana serialises a `MessagePayload` and POSTs it to `/api/diana-notify`. Meeps therefore has no structured knowledge of anything Diana knows. Every joint feature in §7 is blocked by exactly this.
+
+> **Correction to `new-design.md` §1.1.** That document describes a "Diana webhook receiver at `/api/diana-notify`" in Meeps. **It does not exist** — there is no such route anywhere in the Meeps repository; only `buildNotifyController.js`, which handles GitHub build pings. The integration is half-built: Diana sends, nothing receives, and `meepsAdapter.ts` early-returns whenever `MEEPS_WEBHOOK_URL` is unset.
+>
+> This makes DN-1 **easier**, not harder: there is no legacy receiver to stay compatible with and no existing Meeps rendering to preserve. The only backward-compatibility burden is Discord's output, which is now covered by snapshot tests in `test/discordPayloadRegression.test.ts`.
 
 `MessagePayload` (`packages/diana-core/src/core/pluginTypes.ts:9-20`) is presentation-shaped - title, description, colourHex, fields, footer. There is **no discriminator, no scope id, no idempotency key** anywhere in it.
 
@@ -204,14 +208,24 @@ Scheduled in R3 rather than R1 because it is not a blocker on charging money - b
 
 ### Diana track
 
-| ID           | Item                                                                                                                     | Effort       | Acceptance                                                                                                                                                                |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ⬜ **DN-1**  | Typed event bus + `EventAdapter`, with at-least-once delivery and `matchId` idempotency; fix the `supportUrl` divergence | M            | `EventAdapter` ships alongside `MessageAdapter`; Discord output byte-identical (regression-tested); Meeps stores events as rows; redelivery of any event is provably safe |
-| ⬜ **DN-2**  | `squad_id` scope, portable across Discord guild and Meeps space                                                          | S–M          | `/iotw`, `/leaderboard` and digests correct across two guilds _and_ two spaces, with a test                                                                               |
-| ⬜ **DN-3**  | Riot account linking (RSO if granted, icon handshake otherwise) + per-player privacy opt-out                             | M            | Verified link; opt-out honoured by every leaderboard, digest and recap                                                                                                    |
-| ⬜ **DN-8**  | Riot compliance package                                                                                                  | S, long lead | Product registered; status Approved or Acknowledged; single production key; transformativeness statement written; free tier defined                                       |
-| ⬜ **DN-4**  | Betting removed from the roadmap                                                                                         | XS           | No wagering design or code path exists anywhere. **Note: no betting code was ever written** - this is a documentation deletion, already done by this file's existence     |
-| ⬜ **DN-10** | Migration tooling hardening                                                                                              | S            | Duplicate `002_*` filenames resolved; a versions table or a real migration framework, before multi-tenancy adds a dozen more                                              |
+| ID          | Item                                                                                             | Effort       | Acceptance                                                                                                                                                                |
+| ----------- | ------------------------------------------------------------------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🔨 **DN-1** | Typed event bus + `EventAdapter`, with at-least-once delivery and deterministic idempotency keys | M            | `EventAdapter` ships alongside `MessageAdapter`; Discord output byte-identical (regression-tested); Meeps stores events as rows; redelivery of any event is provably safe |
+| ⬜ **DN-2** | `squad_id` scope, portable across Discord guild and Meeps space                                  | S–M          | `/iotw`, `/leaderboard` and digests correct across two guilds _and_ two spaces, with a test                                                                               |
+| ⬜ **DN-3** | Riot account linking (RSO if granted, icon handshake otherwise) + per-player privacy opt-out     | M            | Verified link; opt-out honoured by every leaderboard, digest and recap                                                                                                    |
+| ⬜ **DN-8** | Riot compliance package                                                                          | S, long lead | Product registered; status Approved or Acknowledged; single production key; transformativeness statement written; free tier defined                                       |
+| ⬜ **DN-4** | Betting removed from the roadmap                                                                 | XS           | No wagering design or code path exists anywhere. **Note: no betting code was ever written** - this is a documentation deletion, already done by this file's existence     |
+| ~~DN-10~~   | ~~Migration tooling hardening~~ — **dropped, see below**                                         | —            | Not needed                                                                                                                                                                |
+
+> **DN-10 was written on a false premise and has been dropped.** `db/migrate.sh`
+> already maintains a `schema_migration_diana` versions table keyed on filename,
+> applying in `ls | sort` order. The duplicate `002_*` prefix is cosmetic — and
+> renaming those files would be actively harmful, because the filename **is** the
+> applied-key, so a rename makes those migrations re-run against production.
+
+> **The `supportUrl` divergence in DN-1 is moot** and has been removed from the
+> acceptance criteria. `serializeMessagePayload` does drop the field, but nothing
+> consumes the message webhook — see §3.2. The path retires under MP-6.
 
 ### Meeps track
 
@@ -446,36 +460,36 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 
 ### 13.1 Traceability - every `new-design.md` ID
 
-| ID    | Item                                 | Here                                           |
-| ----- | ------------------------------------ | ---------------------------------------------- |
-| MP-1  | Spaces multi-tenancy                 | §6 R1                                          |
-| MP-2  | Roles & moderation                   | §6 R1                                          |
-| MP-3  | SFU voice                            | §7 R2                                          |
-| MP-4  | Self-serve onboarding                | §6 R1                                          |
-| MP-5  | macOS build                          | §6 R1                                          |
-| MP-6  | Native event rendering               | §7 R2                                          |
-| MP-7  | Consent & data surface               | §6 R1                                          |
-| MP-8  | Bridge productisation                | §6 R1                                          |
-| MP-9  | Typed backend + coverage             | §8.6 R3                                        |
-| DN-1  | Typed event bus                      | §5.1, §6 R1                                    |
-| DN-2  | `squad_id` scope                     | §5.2, §6 R1                                    |
-| DN-3  | Riot account linking + opt-out       | §5.3, §6 R1                                    |
-| DN-4  | Kill betting                         | §6 R1 - **doc deletion only, no code existed** |
-| DN-5  | Presence ingestion                   | §7 R2                                          |
-| DN-6  | Session service                      | §7 R2                                          |
-| DN-7  | Rate limiter, cache, Postgres config | §8.6 R3                                        |
-| DN-8  | Riot compliance package              | §6 R1, **week 1**                              |
-| DN-9  | Old roadmap Phase 0                  | ✅ **Shipped** - §3.1                          |
-| DN-10 | Migration tooling _(new)_            | §6 R1                                          |
-| 6.3.1 | Session Recap                        | §7.1                                           |
-| 6.3.2 | Session Curve                        | §8.1                                           |
-| 6.3.3 | LCU presence & champ select          | §8.2                                           |
-| 6.3.4 | Squad Draft                          | §8.3                                           |
-| 6.3.5 | Squad Wrapped                        | §7.2                                           |
-| 6.3.6 | Presence-aware notifications         | §7.3                                           |
-| 6.3.7 | Cross-game continuity                | §10, ideas                                     |
-| 6.4   | Calls                                | §8.5                                           |
-| §5.2  | Pipeline consolidation               | §5.4, §8.6                                     |
+| ID        | Item                                 | Here                                                |
+| --------- | ------------------------------------ | --------------------------------------------------- |
+| MP-1      | Spaces multi-tenancy                 | §6 R1                                               |
+| MP-2      | Roles & moderation                   | §6 R1                                               |
+| MP-3      | SFU voice                            | §7 R2                                               |
+| MP-4      | Self-serve onboarding                | §6 R1                                               |
+| MP-5      | macOS build                          | §6 R1                                               |
+| MP-6      | Native event rendering               | §7 R2                                               |
+| MP-7      | Consent & data surface               | §6 R1                                               |
+| MP-8      | Bridge productisation                | §6 R1                                               |
+| MP-9      | Typed backend + coverage             | §8.6 R3                                             |
+| DN-1      | Typed event bus                      | §5.1, §6 R1                                         |
+| DN-2      | `squad_id` scope                     | §5.2, §6 R1                                         |
+| DN-3      | Riot account linking + opt-out       | §5.3, §6 R1                                         |
+| DN-4      | Kill betting                         | §6 R1 - **doc deletion only, no code existed**      |
+| DN-5      | Presence ingestion                   | §7 R2                                               |
+| DN-6      | Session service                      | §7 R2                                               |
+| DN-7      | Rate limiter, cache, Postgres config | §8.6 R3                                             |
+| DN-8      | Riot compliance package              | §6 R1, **week 1**                                   |
+| DN-9      | Old roadmap Phase 0                  | ✅ **Shipped** - §3.1                               |
+| ~~DN-10~~ | ~~Migration tooling~~                | **Dropped** — versions table already exists; see §6 |
+| 6.3.1     | Session Recap                        | §7.1                                                |
+| 6.3.2     | Session Curve                        | §8.1                                                |
+| 6.3.3     | LCU presence & champ select          | §8.2                                                |
+| 6.3.4     | Squad Draft                          | §8.3                                                |
+| 6.3.5     | Squad Wrapped                        | §7.2                                                |
+| 6.3.6     | Presence-aware notifications         | §7.3                                                |
+| 6.3.7     | Cross-game continuity                | §10, ideas                                          |
+| 6.4       | Calls                                | §8.5                                                |
+| §5.2      | Pipeline consolidation               | §5.4, §8.6                                          |
 
 ### 13.2 What changed from `diana-roadmap.md`
 
@@ -500,7 +514,8 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 
 ### 13.3 Migrations by release
 
-- **R1** `[Diana]`: `squads` + squad attachments (guild ⇄ space); `identities` + `riot_account_links`; per-player privacy flags; event log with idempotency key. Migration tooling fix (DN-10) **first**.
+- **R1** `[Diana]`: `squads` + squad attachments (guild ⇄ space); `identities` + `riot_account_links`; per-player privacy flags.
+- **R1** `[Meeps]`: `029_diana_events.sql` — the event log, `event_id` as primary key for idempotency. ✅ written.
 - **R1** `[Meeps]`: `spaces`, `channels`, `memberships`, invite links; roles/permissions; consent + export records; event rows (match / rank / session).
 - **R2**: `sessions`; voice presence intervals.
 - **R3**: live-game dedup state (**separate from `summoners.currentMatchId`**); Calls windows + accuracy stats; plugin config tables; `diana-builds` tables migrated from Meeps.

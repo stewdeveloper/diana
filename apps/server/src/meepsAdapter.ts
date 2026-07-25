@@ -1,10 +1,9 @@
 import type { MessageAdapter, MessagePayload, MessageTarget } from 'diana-core';
+import { isEnvFlagEnabled, resolveMeepsUrl } from './meepsUrl';
 
 const MEEPS_WEBHOOK_URL = process.env.MEEPS_WEBHOOK_URL;
 const MEEPS_WEBHOOK_SECRET = process.env.MEEPS_WEBHOOK_SECRET;
-const DISABLE_MEEPS_POSTS = ['1', 'true', 'yes'].includes(
-    (process.env.DISABLE_MEEPS_POSTS ?? '').toLowerCase()
-);
+const DISABLE_MEEPS_POSTS = isEnvFlagEnabled(process.env.DISABLE_MEEPS_POSTS);
 
 let _meepsConfigLogged = false;
 
@@ -43,36 +42,11 @@ export function createMeepsMessageAdapter(): MessageAdapter {
                 return;
             }
 
-            if (!MEEPS_WEBHOOK_URL?.trim()) return;
-
-            const baseUrl = MEEPS_WEBHOOK_URL.trim();
-            // Ensure we have a valid absolute URL (fetch requires a scheme)
-            let normalizedBaseUrl: string;
-            if (/^https?:\/\//i.test(baseUrl)) {
-                normalizedBaseUrl = baseUrl;
-            } else if (/^\/\//.test(baseUrl)) {
-                // Protocol-relative URL: //host -> https://host
-                normalizedBaseUrl = 'https:' + baseUrl;
-            } else {
-                normalizedBaseUrl = 'https://' + baseUrl;
-            }
-            const url =
-                normalizedBaseUrl.replace(/\/$/, '') + '/api/diana-notify';
-
-            // Validate URL before fetch (helps catch misconfigured MEEPS_WEBHOOK_URL)
-            let parsed: URL;
-            try {
-                parsed = new URL(url);
-            } catch {
-                console.error(
-                    '[Diana] Invalid MEEPS_WEBHOOK_URL:',
-                    JSON.stringify(MEEPS_WEBHOOK_URL),
-                    '→ resolved to:',
-                    url,
-                    '(expected e.g. https://meeps.railway.internal)'
-                );
-                return;
-            }
+            const parsed = resolveMeepsUrl(
+                MEEPS_WEBHOOK_URL,
+                '/api/diana-notify'
+            );
+            if (!parsed) return;
 
             if (!_meepsConfigLogged) {
                 _meepsConfigLogged = true;

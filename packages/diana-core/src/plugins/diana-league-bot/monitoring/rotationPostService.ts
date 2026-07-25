@@ -5,6 +5,8 @@ import {
 import { buildChampionIdMap } from '../api/utils/dataDragonService';
 import { createLolService } from '../api/utils/lolService/lolServiceFactory';
 import type { MessageAdapter, MessagePayload } from '../../../core/pluginTypes';
+import type { EventAdapter } from '../../../core/eventTypes';
+import { buildPeriodicEventId, toIsoWeek } from '../../../core/eventTypes';
 import type { LeagueBotConfig } from '../types';
 
 const lolService = createLolService();
@@ -17,10 +19,17 @@ async function championNames(championIds: number[]): Promise<string[]> {
 }
 
 /**
- * Build the free-rotation payload, or null when the rotation is empty.
+ * Build the free-rotation post, or null when the rotation is empty.
  * One Riot call per tick, shared by every guild.
+ *
+ * Returns the champion names alongside the payload so the rotation event can
+ * carry them without a second lookup - the payload itself only has them joined
+ * into a display string.
  */
-export async function buildRotationPayload(): Promise<MessagePayload | null> {
+export async function buildRotationPost(): Promise<{
+    payload: MessagePayload;
+    championNames: string[];
+} | null> {
     const rotation = await lolService.getChampionRotation();
     if (!rotation || rotation.freeChampionIds.length === 0) return null;
 
@@ -28,24 +37,35 @@ export async function buildRotationPayload(): Promise<MessagePayload | null> {
     names.sort((a, b) => a.localeCompare(b));
 
     return {
-        title: '🔄 **Free Champion Rotation**',
-        description: "This week's free champions - try something new!",
-        colorHex: 0x1e90ff,
-        fields: [
-            {
-                name: '🆓 **Free to Play**',
-                value: names.join(', '),
-                inline: false,
-            },
-        ],
-        footer: 'Free Rotation • Updates weekly',
-        timestamp: new Date().toISOString(),
+        championNames: names,
+        payload: {
+            title: '🔄 **Free Champion Rotation**',
+            description: "This week's free champions - try something new!",
+            colorHex: 0x1e90ff,
+            fields: [
+                {
+                    name: '🆓 **Free to Play**',
+                    value: names.join(', '),
+                    inline: false,
+                },
+            ],
+            footer: 'Free Rotation • Updates weekly',
+            timestamp: new Date().toISOString(),
+        },
     };
+}
+
+/**
+ * Payload-only view of {@link buildRotationPost}.
+ */
+export async function buildRotationPayload(): Promise<MessagePayload | null> {
+    return (await buildRotationPost())?.payload ?? null;
 }
 
 export function createRotationPostTick(
     _config: LeagueBotConfig,
-    messageAdapter: MessageAdapter | null | undefined
+    messageAdapter: MessageAdapter | null | undefined,
+    eventAdapter?: EventAdapter | null
 ): () => Promise<void> {
     return async function runRotationPostTick(): Promise<void> {
         if (process.env.STOP_BOT) {
@@ -68,9 +88,9 @@ export function createRotationPostTick(
         );
         if (optedIn.length === 0) return;
 
-        let payload: MessagePayload | null;
+        let post: Awaited<ReturnType<typeof buildRotationPost>>;
         try {
-            payload = await buildRotationPayload();
+            post = await buildRotationPost();
         } catch (error) {
             console.error(
                 '[Error] Failed to fetch the free champion rotation:',
@@ -78,7 +98,9 @@ export function createRotationPostTick(
             );
             return;
         }
-        if (!payload) return;
+        if (!post) return;
+        const { payload, championNames: names } = post;
+        const isoWeek = toIsoWeek(new Date());
 
         for (const guild of optedIn) {
             try {
@@ -92,6 +114,28 @@ export function createRotationPostTick(
             } catch (error) {
                 console.error(
                     `[Error] Failed to send rotation post to guild ${guild.guild_id}:`,
+                    error
+                );
+            }
+
+            // Keyed on the ISO week, so a redeploy that re-runs the cron in the
+            // same week cannot create a second row.
+            try {
+                await eventAdapter?.emit({
+                    eventId: buildPeriodicEventId(
+                        'rotation.weekly',
+                        guild.guild_id,
+                        isoWeek
+                    ),
+                    type: 'rotation.weekly',
+                    occurredAt: new Date().toISOString(),
+                    guildId: guild.guild_id,
+                    isoWeek,
+                    championNames: names,
+                });
+            } catch (error) {
+                console.error(
+                    `[Error] Failed to emit rotation event for guild ${guild.guild_id}:`,
                     error
                 );
             }

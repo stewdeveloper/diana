@@ -1,5 +1,6 @@
 export * from './core/pluginRegistry'; // includes setPluginMessageAdapter
 export * from './core/pluginTypes';
+export * from './core/eventTypes';
 export * from './core/api/authApi';
 export * from './core/api/pluginsApi';
 export * from './core/auth/authMiddleware';

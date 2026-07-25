@@ -5,6 +5,7 @@ import type {
     PluginInfo,
     MessageAdapter,
 } from './pluginTypes';
+import type { EventAdapter } from './eventTypes';
 import {
     getPluginConfig,
     isPluginEnabled,
@@ -27,6 +28,8 @@ const loadedPlugins = new Map<string, LoadedPlugin>();
 let expressApp: Application | null = null;
 let messageAdapter: MessageAdapter | null = null;
 const pluginAdapters = new Map<string, MessageAdapter>();
+let eventAdapter: EventAdapter | null = null;
+const pluginEventAdapters = new Map<string, EventAdapter>();
 const pendingMounts: { pluginId: string; path: string; router: Router }[] = [];
 
 /** Formatted timestamp for logs */
@@ -74,6 +77,17 @@ export function setPluginMessageAdapter(
     adapter: MessageAdapter
 ): void {
     pluginAdapters.set(pluginId, adapter);
+}
+
+export function setEventAdapter(adapter: EventAdapter | null): void {
+    eventAdapter = adapter;
+}
+
+export function setPluginEventAdapter(
+    pluginId: string,
+    adapter: EventAdapter
+): void {
+    pluginEventAdapters.set(pluginId, adapter);
 }
 
 function createContext(pluginId: string): PluginContext {
@@ -148,6 +162,9 @@ function createContext(pluginId: string): PluginContext {
         },
         getMessageAdapter(): MessageAdapter | null {
             return pluginAdapters.get(pluginId) ?? messageAdapter;
+        },
+        getEventAdapter(): EventAdapter | null {
+            return pluginEventAdapters.get(pluginId) ?? eventAdapter;
         },
     };
 }

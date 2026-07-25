@@ -157,4 +157,54 @@ describe('createRotationPostTick', () => {
         expect(adapter.sendMessage).not.toHaveBeenCalled();
         jest.restoreAllMocks();
     });
+
+    // -----------------------------------------------------------------------
+    // Event emission (DN-1)
+    // -----------------------------------------------------------------------
+
+    it('emits a rotation event per posted guild, keyed on the ISO week', async () => {
+        getAllGuildConfigsMock.mockResolvedValue([optedInGuild()]);
+        const adapter = { sendMessage: jest.fn().mockResolvedValue(undefined) };
+        const events = { emit: jest.fn().mockResolvedValue(undefined) };
+
+        await createRotationPostTick(baseConfig as any, adapter, events)();
+
+        expect(events.emit).toHaveBeenCalledTimes(1);
+        expect(events.emit).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'rotation.weekly',
+                guildId: 'g1',
+                championNames: ['Annie'],
+                eventId: expect.stringMatching(
+                    /^rotation\.weekly:g1:\d{4}-W\d{2}$/
+                ),
+            })
+        );
+    });
+
+    it('works with no event adapter - emission is optional', async () => {
+        getAllGuildConfigsMock.mockResolvedValue([optedInGuild()]);
+        const adapter = { sendMessage: jest.fn().mockResolvedValue(undefined) };
+
+        await expect(
+            createRotationPostTick(baseConfig as any, adapter)()
+        ).resolves.toBeUndefined();
+
+        expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('still posts to Discord when event emission throws', async () => {
+        jest.spyOn(console, 'error').mockImplementation(() => undefined);
+        getAllGuildConfigsMock.mockResolvedValue([optedInGuild()]);
+        const adapter = { sendMessage: jest.fn().mockResolvedValue(undefined) };
+        const events = {
+            emit: jest.fn().mockRejectedValue(new Error('meeps down')),
+        };
+
+        await createRotationPostTick(baseConfig as any, adapter, events)();
+
+        // Discord is the product; events are the nice-to-have.
+        expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
+        jest.restoreAllMocks();
+    });
 });

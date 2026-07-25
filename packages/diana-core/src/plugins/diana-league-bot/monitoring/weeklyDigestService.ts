@@ -1,4 +1,6 @@
 import { db } from '../api/utils/db';
+import type { EventAdapter } from '../../../core/eventTypes';
+import { buildPeriodicEventId, toIsoWeek } from '../../../core/eventTypes';
 import {
     getAllGuildConfigs,
     getNotificationPref,
@@ -190,7 +192,8 @@ export async function buildWeeklyDigestPayload(
 
 export function createWeeklyDigestTick(
     _config: LeagueBotConfig,
-    messageAdapter: MessageAdapter | null | undefined
+    messageAdapter: MessageAdapter | null | undefined,
+    eventAdapter?: EventAdapter | null
 ): () => Promise<void> {
     return async function runWeeklyDigestTick(): Promise<void> {
         if (process.env.STOP_BOT) {
@@ -222,6 +225,21 @@ export function createWeeklyDigestTick(
                 console.log(
                     `[Info] [${new Date().toISOString()}] Sent weekly digest to guild ${guild.guild_id}.`
                 );
+
+                // Keyed on the ISO week the digest covers, so a retry or a
+                // redeploy inside the same week cannot create a second row.
+                const isoWeek = toIsoWeek(new Date());
+                await eventAdapter?.emit({
+                    eventId: buildPeriodicEventId(
+                        'digest.weekly',
+                        guild.guild_id,
+                        isoWeek
+                    ),
+                    type: 'digest.weekly',
+                    occurredAt: new Date().toISOString(),
+                    guildId: guild.guild_id,
+                    isoWeek,
+                });
             } catch (error) {
                 console.error(
                     `[Error] Failed to send weekly digest to guild ${guild.guild_id}:`,

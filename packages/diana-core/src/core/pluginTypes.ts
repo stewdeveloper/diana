@@ -1,4 +1,5 @@
 import type { Router } from 'express';
+import type { EventAdapter } from './eventTypes';
 
 export interface MessageField {
     name: string;
@@ -36,6 +37,13 @@ export interface PluginContext {
     getConfig<T = Record<string, unknown>>(): T;
     /** Get the shared message adapter (if one is registered). */
     getMessageAdapter(): MessageAdapter | null;
+    /**
+     * Get the shared event adapter (if one is registered).
+     *
+     * Structured events for downstream consumers, emitted alongside — never
+     * instead of — messages. See ./eventTypes.ts.
+     */
+    getEventAdapter(): EventAdapter | null;
 }
 
 export interface DianaPlugin {

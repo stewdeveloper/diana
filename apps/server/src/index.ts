@@ -12,6 +12,7 @@ import {
     authApiRouter,
     requireAuth,
     setPluginMessageAdapter,
+    setPluginEventAdapter,
     leagueBotPlugin,
     apexBotPlugin,
 } from 'diana-core';
@@ -26,6 +27,7 @@ import {
     createDianaPluginAdapter,
     createPathfinderPluginAdapter,
 } from './messageAdapter';
+import { createMeepsEventAdapter } from './meepsEventAdapter';
 
 // Rate limiter for dashboard routes (100 requests per minute per IP)
 const dashboardLimiter = rateLimit({
@@ -121,6 +123,10 @@ async function main() {
     setExpressApp(app);
     setPluginMessageAdapter(leagueBotPlugin.id, createDianaPluginAdapter());
     setPluginMessageAdapter(apexBotPlugin.id, createPathfinderPluginAdapter());
+
+    // Structured events (DN-1). League only for now - the Apex plugin still
+    // posts messages exclusively.
+    setPluginEventAdapter(leagueBotPlugin.id, createMeepsEventAdapter());
 
     registerSlashCommands([pingCommand, ...leagueDiscordCommands], 'diana');
     registerSlashCommands([...apexDiscordCommands], 'pathfinder');

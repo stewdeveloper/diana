@@ -66,19 +66,22 @@ export const leagueBotPlugin: DianaPlugin = {
 
         const runTick = createMatchMonitoringTick(
             config,
-            context.getMessageAdapter()
+            context.getMessageAdapter(),
+            context.getEventAdapter()
         );
         context.registerCron(config.matchCheckCron, runTick);
 
         const runDigest = createWeeklyDigestTick(
             config,
-            context.getMessageAdapter()
+            context.getMessageAdapter(),
+            context.getEventAdapter()
         );
         context.registerCron(config.weeklyDigestCron, runDigest);
 
         const runRotationPost = createRotationPostTick(
             config,
-            context.getMessageAdapter()
+            context.getMessageAdapter(),
+            context.getEventAdapter()
         );
         context.registerCron(config.rotationPostCron, runRotationPost);
     },
