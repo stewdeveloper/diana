@@ -285,4 +285,54 @@ describe('createWeeklyDigestTick', () => {
         expect(adapter.sendMessage).toHaveBeenCalledTimes(2);
         jest.restoreAllMocks();
     });
+
+    // -----------------------------------------------------------------------
+    // Event emission (DN-1)
+    // -----------------------------------------------------------------------
+
+    it('emits a digest event per guild, keyed on the ISO week', async () => {
+        getAllGuildConfigsMock.mockResolvedValue([
+            {
+                guild_id: 'g1',
+                channel_id: 'c1',
+                live_posting: true,
+                notification_prefs: {},
+            },
+        ]);
+        getInterCandidatesSinceMock.mockResolvedValue([makeCandidate()]);
+        const adapter = { sendMessage: jest.fn().mockResolvedValue(undefined) };
+        const events = { emit: jest.fn().mockResolvedValue(undefined) };
+
+        await createWeeklyDigestTick(baseConfig as any, adapter, events)();
+
+        expect(events.emit).toHaveBeenCalledTimes(1);
+        expect(events.emit).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'digest.weekly',
+                guildId: 'g1',
+                eventId: expect.stringMatching(
+                    /^digest\.weekly:g1:\d{4}-W\d{2}$/
+                ),
+            })
+        );
+    });
+
+    it('works with no event adapter - emission is optional', async () => {
+        getAllGuildConfigsMock.mockResolvedValue([
+            {
+                guild_id: 'g1',
+                channel_id: 'c1',
+                live_posting: true,
+                notification_prefs: {},
+            },
+        ]);
+        getInterCandidatesSinceMock.mockResolvedValue([makeCandidate()]);
+        const adapter = { sendMessage: jest.fn().mockResolvedValue(undefined) };
+
+        await expect(
+            createWeeklyDigestTick(baseConfig as any, adapter)()
+        ).resolves.toBeUndefined();
+
+        expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
+    });
 });

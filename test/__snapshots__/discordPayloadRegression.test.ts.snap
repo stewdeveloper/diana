@@ -1,0 +1,439 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`buildMatchEndMessage payload first place in lobby 1`] = `
+{
+  "colorHex": 2664261,
+  "description": "TestPlayer has completed a match!",
+  "fields": [
+    {
+      "inline": true,
+      "name": "🏁 **Result**",
+      "value": "**Win**",
+    },
+    {
+      "inline": true,
+      "name": "📈 **Rank Update**",
+      "value": "**Gold IV**",
+    },
+    {
+      "inline": true,
+      "name": "🔄 **LP Change**",
+      "value": "**18 LP**",
+    },
+    {
+      "inline": true,
+      "name": "🛡️ **Champion**",
+      "value": "**Ahri**",
+    },
+    {
+      "inline": true,
+      "name": "🕹️ **Queue**",
+      "value": "**Ranked Solo**",
+    },
+    {
+      "inline": true,
+      "name": "🎯 **Role**",
+      "value": "**Middle**",
+    },
+    {
+      "inline": true,
+      "name": "⚔️ **KDA**",
+      "value": "**7/2/10**",
+    },
+    {
+      "inline": true,
+      "name": "💥 **Damage Dealt**",
+      "value": "**42000**",
+    },
+    {
+      "inline": true,
+      "name": "🏆 **Match Placement**",
+      "value": "**1st**",
+    },
+    {
+      "inline": true,
+      "name": "🤖 **AI Score**",
+      "value": "**91.2**",
+    },
+  ],
+  "footer": "Match Summary • Length 30:30",
+  "supportUrl": "https://buymeacoffee.com/yngstew",
+  "thumbnailUrl": "https://ddragon.leagueoflegends.com/cdn/15.2.1/img/champion/Ahri.png",
+  "timestamp": "2026-07-25T12:00:00.000Z",
+  "title": "🎮 **Match Summary**",
+  "url": "https://deeplol.gg/test",
+}
+`;
+
+exports[`buildMatchEndMessage payload non-ranked, non-role queue (ARAM) omits rank and role fields 1`] = `
+{
+  "colorHex": 2664261,
+  "description": "TestPlayer has completed a match!",
+  "fields": [
+    {
+      "inline": true,
+      "name": "🏁 **Result**",
+      "value": "**Win**",
+    },
+    {
+      "inline": true,
+      "name": "🛡️ **Champion**",
+      "value": "**Ahri**",
+    },
+    {
+      "inline": true,
+      "name": "🕹️ **Queue**",
+      "value": "**ARAM**",
+    },
+    {
+      "inline": true,
+      "name": "⚔️ **KDA**",
+      "value": "**7/2/10**",
+    },
+    {
+      "inline": true,
+      "name": "💥 **Damage Dealt**",
+      "value": "**42000**",
+    },
+  ],
+  "footer": "Match Summary • Length 30:30",
+  "supportUrl": "https://buymeacoffee.com/yngstew",
+  "thumbnailUrl": "https://ddragon.leagueoflegends.com/cdn/15.2.1/img/champion/Ahri.png",
+  "timestamp": "2026-07-25T12:00:00.000Z",
+  "title": "🎮 **Match Summary**",
+  "url": "https://deeplol.gg/test",
+}
+`;
+
+exports[`buildMatchEndMessage payload ranked loss with full challenge metrics, placement and flavor line 1`] = `
+{
+  "colorHex": 15158332,
+  "description": "TestPlayer has completed a match!
+
+🚨 Chief communications officer of the missing-ping department.",
+  "fields": [
+    {
+      "inline": true,
+      "name": "🏁 **Result**",
+      "value": "**Lose**",
+    },
+    {
+      "inline": true,
+      "name": "📈 **Rank Update**",
+      "value": "**Gold IV**",
+    },
+    {
+      "inline": true,
+      "name": "🔄 **LP Change**",
+      "value": "**-21 LP**",
+    },
+    {
+      "inline": true,
+      "name": "🛡️ **Champion**",
+      "value": "**Ahri**",
+    },
+    {
+      "inline": true,
+      "name": "🕹️ **Queue**",
+      "value": "**Ranked Solo**",
+    },
+    {
+      "inline": true,
+      "name": "🎯 **Role**",
+      "value": "**Middle**",
+    },
+    {
+      "inline": true,
+      "name": "⚔️ **KDA**",
+      "value": "**7/2/10**",
+    },
+    {
+      "inline": true,
+      "name": "💥 **Damage Dealt**",
+      "value": "**42000**",
+    },
+    {
+      "inline": true,
+      "name": "🤝 **Kill Participation**",
+      "value": "**38%**",
+    },
+    {
+      "inline": true,
+      "name": "📊 **Damage / Min**",
+      "value": "**612**",
+    },
+    {
+      "inline": true,
+      "name": "👁️ **Vision Score**",
+      "value": "**14**",
+    },
+    {
+      "inline": true,
+      "name": "🗡️ **Solo Kills**",
+      "value": "**1**",
+    },
+    {
+      "inline": true,
+      "name": "🏆 **Match Placement**",
+      "value": "**7th**",
+    },
+    {
+      "inline": true,
+      "name": "🤖 **AI Score**",
+      "value": "**42.5**",
+    },
+  ],
+  "footer": "Match Summary • Length 30:30",
+  "supportUrl": "https://buymeacoffee.com/yngstew",
+  "thumbnailUrl": "https://ddragon.leagueoflegends.com/cdn/15.2.1/img/champion/Ahri.png",
+  "timestamp": "2026-07-25T12:00:00.000Z",
+  "title": "🎮 **Match Summary**",
+  "url": "https://deeplol.gg/test",
+}
+`;
+
+exports[`buildMatchEndMessage payload ranked win, minimal input 1`] = `
+{
+  "colorHex": 2664261,
+  "description": "TestPlayer has completed a match!",
+  "fields": [
+    {
+      "inline": true,
+      "name": "🏁 **Result**",
+      "value": "**Win**",
+    },
+    {
+      "inline": true,
+      "name": "📈 **Rank Update**",
+      "value": "**Gold IV**",
+    },
+    {
+      "inline": true,
+      "name": "🔄 **LP Change**",
+      "value": "**18 LP**",
+    },
+    {
+      "inline": true,
+      "name": "🛡️ **Champion**",
+      "value": "**Ahri**",
+    },
+    {
+      "inline": true,
+      "name": "🕹️ **Queue**",
+      "value": "**Ranked Solo**",
+    },
+    {
+      "inline": true,
+      "name": "🎯 **Role**",
+      "value": "**Middle**",
+    },
+    {
+      "inline": true,
+      "name": "⚔️ **KDA**",
+      "value": "**7/2/10**",
+    },
+    {
+      "inline": true,
+      "name": "💥 **Damage Dealt**",
+      "value": "**42000**",
+    },
+  ],
+  "footer": "Match Summary • Length 30:30",
+  "supportUrl": "https://buymeacoffee.com/yngstew",
+  "thumbnailUrl": "https://ddragon.leagueoflegends.com/cdn/15.2.1/img/champion/Ahri.png",
+  "timestamp": "2026-07-25T12:00:00.000Z",
+  "title": "🎮 **Match Summary**",
+  "url": "https://deeplol.gg/test",
+}
+`;
+
+exports[`buildMatchEndMessage payload remake 1`] = `
+{
+  "colorHex": 15105570,
+  "description": "TestPlayer has completed a match!",
+  "fields": [
+    {
+      "inline": true,
+      "name": "🏁 **Result**",
+      "value": "**Remake**",
+    },
+    {
+      "inline": true,
+      "name": "📈 **Rank Update**",
+      "value": "**Gold IV**",
+    },
+    {
+      "inline": true,
+      "name": "🛡️ **Champion**",
+      "value": "**Ahri**",
+    },
+    {
+      "inline": true,
+      "name": "🕹️ **Queue**",
+      "value": "**Ranked Solo**",
+    },
+    {
+      "inline": true,
+      "name": "🎯 **Role**",
+      "value": "**Middle**",
+    },
+    {
+      "inline": true,
+      "name": "⚔️ **KDA**",
+      "value": "**7/2/10**",
+    },
+    {
+      "inline": true,
+      "name": "💥 **Damage Dealt**",
+      "value": "**42000**",
+    },
+  ],
+  "footer": "Match Summary • Length 4:00",
+  "supportUrl": "https://buymeacoffee.com/yngstew",
+  "thumbnailUrl": "https://ddragon.leagueoflegends.com/cdn/15.2.1/img/champion/Ahri.png",
+  "timestamp": "2026-07-25T12:00:00.000Z",
+  "title": "🎮 **Match Summary**",
+  "url": "https://deeplol.gg/test",
+}
+`;
+
+exports[`buildMilestoneMessage payload first time reaching a tier 1`] = `
+{
+  "colorHex": 5294200,
+  "description": "TestPlayer has reached **Emerald IV** for the first time!",
+  "fields": [
+    {
+      "inline": true,
+      "name": "🏅 **Rank**",
+      "value": "**Emerald IV**",
+    },
+  ],
+  "footer": "Milestone Notification",
+  "thumbnailUrl": "https://raw.githubusercontent.com/louissullivan4/diana/refs/heads/main/assets/ranked-emblem/emerald.webp",
+  "timestamp": "2026-07-25T12:00:00.000Z",
+  "title": "🎉 **New Tier Reached!**",
+  "url": "https://deeplol.gg/test",
+}
+`;
+
+exports[`buildMilestoneMessage payload new peak 1`] = `
+{
+  "colorHex": 12186367,
+  "description": "TestPlayer just set a new rank peak: **Diamond III**!",
+  "fields": [
+    {
+      "inline": true,
+      "name": "🏅 **Rank**",
+      "value": "**Diamond III**",
+    },
+  ],
+  "footer": "Milestone Notification",
+  "thumbnailUrl": "https://raw.githubusercontent.com/louissullivan4/diana/refs/heads/main/assets/ranked-emblem/diamond.webp",
+  "timestamp": "2026-07-25T12:00:00.000Z",
+  "title": "🏔️ **New Peak!**",
+  "url": "https://deeplol.gg/test",
+}
+`;
+
+exports[`buildRankChangeMessage payload demotion 1`] = `
+{
+  "colorHex": 16766720,
+  "description": "TestPlayer has been demoted.",
+  "fields": [
+    {
+      "inline": true,
+      "name": "🏆 **Rank Change**",
+      "value": "**Gold I**",
+    },
+    {
+      "inline": true,
+      "name": "🔄 **LP Change**",
+      "value": "**-18 LP**",
+    },
+  ],
+  "footer": "Rank Change Notification",
+  "thumbnailUrl": "https://raw.githubusercontent.com/louissullivan4/diana/refs/heads/main/assets/ranked-emblem/gold.webp",
+  "timestamp": "2026-07-25T12:00:00.000Z",
+  "title": "📉 **Rank Demotion...**",
+  "url": "https://deeplol.gg/test",
+}
+`;
+
+exports[`buildRankChangeMessage payload promotion 1`] = `
+{
+  "colorHex": 4251856,
+  "description": "TestPlayer has ranked up!",
+  "fields": [
+    {
+      "inline": true,
+      "name": "🏆 **Rank Change**",
+      "value": "**Platinum IV**",
+    },
+    {
+      "inline": true,
+      "name": "🔄 **LP Change**",
+      "value": "**24 LP**",
+    },
+  ],
+  "footer": "Rank Change Notification",
+  "thumbnailUrl": "https://raw.githubusercontent.com/louissullivan4/diana/refs/heads/main/assets/ranked-emblem/platinum.webp",
+  "timestamp": "2026-07-25T12:00:00.000Z",
+  "title": "📈 **Rank Promotion!**",
+  "url": "https://deeplol.gg/test",
+}
+`;
+
+exports[`buildRankChangeMessage payload promotion without an LP delta 1`] = `
+{
+  "colorHex": 12632256,
+  "description": "TestPlayer has ranked up!",
+  "fields": [
+    {
+      "inline": true,
+      "name": "🏆 **Rank Change**",
+      "value": "**Silver II**",
+    },
+  ],
+  "footer": "Rank Change Notification",
+  "thumbnailUrl": "https://raw.githubusercontent.com/louissullivan4/diana/refs/heads/main/assets/ranked-emblem/silver.webp",
+  "timestamp": "2026-07-25T12:00:00.000Z",
+  "title": "📈 **Rank Promotion!**",
+  "url": "https://deeplol.gg/test",
+}
+`;
+
+exports[`buildStreakMessage payload loss streak 1`] = `
+{
+  "colorHex": 15158332,
+  "description": "TestPlayer has lost **3 in a row**. Thoughts and prayers.",
+  "fields": [
+    {
+      "inline": true,
+      "name": "📉 **Streak**",
+      "value": "**3 losses**",
+    },
+  ],
+  "footer": "Streak Notification",
+  "timestamp": "2026-07-25T12:00:00.000Z",
+  "title": "🧊 **Loss Streak...**",
+  "url": "https://deeplol.gg/test",
+}
+`;
+
+exports[`buildStreakMessage payload win streak 1`] = `
+{
+  "colorHex": 2664261,
+  "description": "TestPlayer is on a **5-game win streak**! Someone stop them.",
+  "fields": [
+    {
+      "inline": true,
+      "name": "📈 **Streak**",
+      "value": "**5 wins**",
+    },
+  ],
+  "footer": "Streak Notification",
+  "timestamp": "2026-07-25T12:00:00.000Z",
+  "title": "🔥 **Win Streak!**",
+  "url": "https://deeplol.gg/test",
+}
+`;
