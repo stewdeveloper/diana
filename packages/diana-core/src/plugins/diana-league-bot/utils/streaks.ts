@@ -1,12 +1,18 @@
 import { db } from '../api/utils/db';
 import { parseParticipants } from './interStats';
 import { getTotalPoints } from '../api/utils/rankService';
+import {
+    countsForCompetition,
+    type CompetitiveScope,
+} from './queueClassification';
 
 export interface MatchResultRow {
     matchId: string;
     /** null when the entry player could not be found in the stored data */
     win: boolean | null;
     isRemake: boolean;
+    queueId: number | null;
+    gameMode: string | null;
 }
 
 export interface Streak {
@@ -24,8 +30,11 @@ export async function fetchRecentResultsForPuuid(
 ): Promise<MatchResultRow[]> {
     // match_details is UNIQUE(matchId, entryPlayerPuuid), so rows are
     // already one-per-match for a single player.
+    // Deliberately unfiltered by queue: one read has to serve every guild's
+    // competitive scope, so callers narrow it with `filterCompetitiveResults`.
     const result = await db.query(
-        `SELECT md."matchId", md."gameDuration", md."participants"
+        `SELECT md."matchId", md."gameDuration", md."participants",
+                md."queueId", md."gameMode"
          FROM match_details md
          WHERE md."entryPlayerPuuid" = $1
            AND md."gameCreation" IS NOT NULL
@@ -41,8 +50,18 @@ export async function fetchRecentResultsForPuuid(
             matchId: row.matchId as string,
             win: participant?.win ?? null,
             isRemake: Number(row.gameDuration ?? 0) < 300,
+            queueId: row.queueId != null ? Number(row.queueId) : null,
+            gameMode: (row.gameMode as string) ?? null,
         };
     });
+}
+
+/** Narrow raw results to the queues a given scope counts. */
+export function filterCompetitiveResults(
+    rows: MatchResultRow[],
+    scope: CompetitiveScope
+): MatchResultRow[] {
+    return rows.filter((row) => countsForCompetition(row, scope));
 }
 
 /**

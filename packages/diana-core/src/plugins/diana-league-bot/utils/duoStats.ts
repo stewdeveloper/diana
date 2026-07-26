@@ -1,5 +1,10 @@
 import { db } from '../api/utils/db';
 import { parseParticipants } from './interStats';
+import {
+    buildCompetitiveSqlFilter,
+    DEFAULT_COMPETITIVE_SCOPE,
+    type CompetitiveScope,
+} from './queueClassification';
 
 export interface DuoRecord {
     /** Matches where both players were on the same team (remakes excluded) */
@@ -23,16 +28,19 @@ export interface DuoRecord {
 export async function getDuoRecord(
     puuidA: string,
     puuidB: string,
-    sinceTimestamp = 0
+    sinceTimestamp = 0,
+    scope: CompetitiveScope = DEFAULT_COMPETITIVE_SCOPE
 ): Promise<DuoRecord> {
     const result = await db.query(
         `SELECT DISTINCT ON (md."matchId")
-                md."matchId", md."participants", md."gameDuration"
+                md."matchId", md."participants", md."gameDuration",
+                md."queueId", md."gameMode"
          FROM match_details md
          WHERE md."participants" @> $1::jsonb
            AND md."participants" @> $2::jsonb
            AND md."gameCreation" IS NOT NULL
            AND md."gameCreation" >= $3
+           ${buildCompetitiveSqlFilter('md', scope)}
          ORDER BY md."matchId"`,
         [
             JSON.stringify([{ puuid: puuidA }]),

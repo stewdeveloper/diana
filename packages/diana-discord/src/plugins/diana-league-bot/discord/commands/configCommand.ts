@@ -10,8 +10,23 @@ import {
     setGuildLivePosting,
     setGuildNotificationPref,
     getNotificationPref,
+    setGuildCompetitiveScope,
+    getCompetitiveScopeFromConfig,
     type NotificationPrefKey,
+    type CompetitiveScope,
 } from 'diana-core';
+
+const COMPETITIVE_SCOPE_CHOICES: Array<{
+    name: string;
+    value: CompetitiveScope;
+}> = [
+    { name: 'All queues', value: 'all' },
+    { name: 'Ranked only (Solo/Duo + Flex)', value: 'ranked' },
+];
+
+const COMPETITIVE_SCOPE_LABELS = new Map<CompetitiveScope, string>(
+    COMPETITIVE_SCOPE_CHOICES.map((c) => [c.value, c.name])
+);
 
 const NOTIFICATION_TYPES: Array<{ name: string; value: NotificationPrefKey }> =
     [
@@ -73,6 +88,28 @@ export const configCommand: SlashCommand = {
         )
         .addSubcommand((sub) =>
             sub
+                .setName('competitive-scope')
+                .setDescription(
+                    'Choose which queues count toward MVP, leaderboards and streaks.'
+                )
+                .addStringOption((option) => {
+                    option
+                        .setName('scope')
+                        .setDescription(
+                            'All queues, or ranked only. Arena never counts.'
+                        )
+                        .setRequired(true);
+                    for (const choice of COMPETITIVE_SCOPE_CHOICES) {
+                        option.addChoices({
+                            name: choice.name,
+                            value: choice.value,
+                        });
+                    }
+                    return option;
+                })
+        )
+        .addSubcommand((sub) =>
+            sub
                 .setName('view')
                 .setDescription(
                     'View the current bot configuration for this server.'
@@ -117,6 +154,19 @@ export const configCommand: SlashCommand = {
             return;
         }
 
+        if (subcommand === 'competitive-scope') {
+            const scope = interaction.options.getString(
+                'scope',
+                true
+            ) as CompetitiveScope;
+            await setGuildCompetitiveScope(guildId, scope);
+            const label = COMPETITIVE_SCOPE_LABELS.get(scope) ?? scope;
+            await interaction.editReply({
+                content: `Competitive stats now count **${label}**. Arena is always excluded.`,
+            });
+            return;
+        }
+
         if (subcommand === 'view') {
             const config = await getGuildConfig(guildId);
             const channel = config?.channel_id
@@ -136,6 +186,15 @@ export const configCommand: SlashCommand = {
                 return `${name}: **${effective ? 'Enabled' : 'Disabled'}**${suffix}`;
             });
 
+            const competitiveScope = getCompetitiveScopeFromConfig(config);
+            const competitiveScopeLabel = `**${
+                COMPETITIVE_SCOPE_LABELS.get(competitiveScope) ??
+                competitiveScope
+            }**`;
+            const competitiveScopeSuffix = config?.competitive_scope
+                ? ''
+                : ' (default)';
+
             const embed = new EmbedBuilder()
                 .setTitle('Diana - Server Configuration')
                 .addFields(
@@ -152,6 +211,11 @@ export const configCommand: SlashCommand = {
                     {
                         name: 'Notification Types',
                         value: prefLines.join('\n'),
+                        inline: false,
+                    },
+                    {
+                        name: 'Competitive Stats Scope',
+                        value: `${competitiveScopeLabel}${competitiveScopeSuffix}\nArena is always excluded from competitive stats.`,
                         inline: false,
                     }
                 )

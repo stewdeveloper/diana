@@ -9,6 +9,7 @@ import {
     db,
     getDuoRecord,
     getInterCandidatesLastWeek,
+    getGuildCompetitiveScope,
     getMostRecentRankByParticipantIdAndQueueType,
     type InterCandidate,
 } from 'diana-core';
@@ -176,14 +177,17 @@ export const compareCommand: SlashCommand = {
                 return;
             }
 
+            const scope = await getGuildCompetitiveScope(guildId);
             const [weeklyA, weeklyB, rankA, rankB, duo] = await Promise.all([
                 getInterCandidatesLastWeek({
                     targetPuuid: playerA.puuid,
                     guildId,
+                    scope,
                 }),
                 getInterCandidatesLastWeek({
                     targetPuuid: playerB.puuid,
                     guildId,
+                    scope,
                 }),
                 getMostRecentRankByParticipantIdAndQueueType(
                     playerA.puuid,
@@ -193,7 +197,7 @@ export const compareCommand: SlashCommand = {
                     playerB.puuid,
                     'RANKED_SOLO_5x5'
                 ),
-                getDuoRecord(playerA.puuid, playerB.puuid),
+                getDuoRecord(playerA.puuid, playerB.puuid, 0, scope),
             ]);
 
             const nameA = `${playerA.gameName}#${playerA.tagLine}`;

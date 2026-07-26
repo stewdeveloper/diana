@@ -91,12 +91,12 @@ describe('buildWeeklyDigestPayload', () => {
         expect(payload).toBeNull();
     });
 
-    it('passes the guildId into the stats query', async () => {
+    it('passes the guildId and competitive scope into the stats query', async () => {
         getInterCandidatesSinceMock.mockResolvedValue([makeCandidate()]);
         await buildWeeklyDigestPayload('g1');
         expect(getInterCandidatesSinceMock).toHaveBeenCalledWith(
             expect.any(Number),
-            { guildId: 'g1' }
+            { guildId: 'g1', scope: 'all' }
         );
     });
 
@@ -334,5 +334,34 @@ describe('createWeeklyDigestTick', () => {
         ).resolves.toBeUndefined();
 
         expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('fetchWeeklyScoredGames competitive filtering', () => {
+    beforeEach(() => {
+        dbQueryMock.mockReset();
+        dbQueryMock.mockResolvedValue({ rows: [] });
+        getInterCandidatesSinceMock.mockResolvedValue([makeCandidate()]);
+    });
+
+    const scoredGamesQuery = () => {
+        const call = dbQueryMock.mock.calls.find((c: any[]) =>
+            String(c[0]).includes('match_scores')
+        );
+        return String(call?.[0] ?? '');
+    };
+
+    it('excludes Arena from the best/worst game picks', async () => {
+        await buildWeeklyDigestPayload('g1');
+        expect(scoredGamesQuery()).toContain("<> 'CHERRY'");
+    });
+
+    it('filters via EXISTS, not a join, so late-added summoners are kept', async () => {
+        // match_scores holds every participant but match_details only holds
+        // entry players, so an inner join would silently drop rows.
+        await buildWeeklyDigestPayload('g1');
+        const query = scoredGamesQuery();
+        expect(query).toContain('EXISTS');
+        expect(query).not.toContain('JOIN match_details');
     });
 });

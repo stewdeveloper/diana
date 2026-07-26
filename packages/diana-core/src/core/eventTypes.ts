@@ -50,6 +50,18 @@ export interface MatchCompletedEvent extends DianaEventBase {
     summonerName: string;
     queueId?: number;
     queueName: string;
+    /** Riot's raw gameMode, e.g. 'CLASSIC', 'ARAM', 'CHERRY'. */
+    gameMode?: string;
+    /** Arena (gameMode CHERRY). Never scored, never counts toward competition. */
+    isArena?: boolean;
+    /**
+     * Whether this match counts toward competitive stats under the widest
+     * scope ('all' - i.e. everything except Arena). Guilds set to 'ranked' will
+     * count fewer; consumers can narrow further using `queueId`.
+     */
+    countsForCompetition?: boolean;
+    /** Arena only: Riot's real placement, 1st-8th. */
+    subteamPlacement?: number;
     championName: string;
     role?: string;
     /** 'Win' | 'Lose' | 'Remake', as rendered. */
@@ -86,6 +98,12 @@ export interface StreakEvent extends DianaEventBase {
     summonerName: string;
     kind: 'win' | 'loss';
     length: number;
+    /**
+     * Which queues this streak counted. Events fire once per match, not per
+     * guild, so this is always 'all' (every queue except Arena) even when
+     * individual guilds are set to 'ranked' and see a different streak.
+     */
+    competitiveScope?: 'all' | 'ranked';
 }
 
 export interface MilestoneEvent extends DianaEventBase {

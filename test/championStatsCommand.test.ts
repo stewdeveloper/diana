@@ -72,6 +72,15 @@ class MockSlashCommandBuilder {
         this.options.push(option);
         return this;
     }
+
+    addBooleanOption(
+        configure: (option: MockSlashCommandStringOption) => unknown
+    ) {
+        const option = new MockSlashCommandStringOption();
+        configure(option);
+        this.options.push(option);
+        return this;
+    }
 }
 
 class MockEmbedBuilder {
@@ -128,6 +137,10 @@ jest.mock('discord.js', () => ({
 }));
 
 jest.mock('diana-core', () => ({
+    getGuildCompetitiveScope: jest.fn().mockResolvedValue('all'),
+    buildCompetitiveSqlFilter: jest.requireActual(
+        '../packages/diana-core/src/plugins/diana-league-bot/utils/queueClassification'
+    ).buildCompetitiveSqlFilter,
     getSummonerByAccountName: getSummonerByAccountNameMock,
     searchSummonerGameNames: searchSummonerGameNamesMock,
     searchSummonerTags: searchSummonerTagsMock,
@@ -248,6 +261,7 @@ describe('championStatsCommand', () => {
 
             const interaction = {
                 options: {
+                    getBoolean: jest.fn(() => null),
                     getString: jest.fn((key: string, _required?: boolean) => {
                         if (key === 'name') return 'Faker';
                         if (key === 'champion') return 'Ahri';
@@ -268,6 +282,7 @@ describe('championStatsCommand', () => {
 
             const interaction = {
                 options: {
+                    getBoolean: jest.fn(() => null),
                     getString: jest.fn((key: string, _required?: boolean) => {
                         if (key === 'name') return 'Ghost';
                         if (key === 'champion') return 'Ahri';
@@ -294,6 +309,7 @@ describe('championStatsCommand', () => {
 
             const interaction = {
                 options: {
+                    getBoolean: jest.fn(() => null),
                     getString: jest.fn((key: string, _required?: boolean) => {
                         if (key === 'name') return 'NoOne';
                         if (key === 'champion') return 'Ahri';
@@ -322,6 +338,7 @@ describe('championStatsCommand', () => {
 
             const interaction = {
                 options: {
+                    getBoolean: jest.fn(() => null),
                     getString: jest.fn((key: string, _required?: boolean) => {
                         if (key === 'name') return 'Faker';
                         if (key === 'champion') return 'Ahri';
@@ -346,6 +363,7 @@ describe('championStatsCommand', () => {
 
             const interaction = {
                 options: {
+                    getBoolean: jest.fn(() => null),
                     getString: jest.fn((key: string, _required?: boolean) => {
                         if (key === 'name') return 'Faker';
                         if (key === 'champion') return 'Ahri';
@@ -370,6 +388,7 @@ describe('championStatsCommand', () => {
 
             const interaction = {
                 options: {
+                    getBoolean: jest.fn(() => null),
                     getString: jest.fn((key: string, _required?: boolean) => {
                         if (key === 'name') return 'Faker';
                         if (key === 'champion') return 'Ahri';
@@ -398,6 +417,7 @@ describe('championStatsCommand', () => {
 
             const interaction = {
                 options: {
+                    getBoolean: jest.fn(() => null),
                     getString: jest.fn((key: string, _required?: boolean) => {
                         if (key === 'name') return 'Faker';
                         if (key === 'champion') return 'Ahri';
@@ -425,6 +445,7 @@ describe('championStatsCommand', () => {
 
             const interaction = {
                 options: {
+                    getBoolean: jest.fn(() => null),
                     getString: jest.fn((key: string, _required?: boolean) => {
                         if (key === 'name') return 'Faker';
                         if (key === 'champion') return 'Ahri';
@@ -449,6 +470,7 @@ describe('championStatsCommand', () => {
 
             const interaction = {
                 options: {
+                    getBoolean: jest.fn(() => null),
                     getString: jest.fn((key: string, _required?: boolean) => {
                         if (key === 'name') return 'Faker';
                         if (key === 'champion') return 'Ahri';

@@ -28,7 +28,14 @@ import {
     getAllTrackedPuuids,
     getGuildsTrackingSummoner,
     getNotificationPref,
+    getCompetitiveScopeFromConfig,
 } from '../api/summoners/guildService.js';
+import {
+    isArenaMatch,
+    countsForCompetition,
+    COMPETITIVE_SCOPES,
+    type CompetitiveScope,
+} from '../utils/queueClassification';
 import { buildDeepLolLink } from '../utils/deepLol.js';
 import {
     notifyMatchEnd,
@@ -40,6 +47,7 @@ import { pickFlavorLine } from '../notifications/flavorLines';
 import {
     computeWinLossStreak,
     fetchRecentResultsForPuuid,
+    filterCompetitiveResults,
     isStreakThreshold,
     detectRankMilestone,
     type Streak,
@@ -230,14 +238,24 @@ const handleNewMatchCompleted = async (
         teams: JSON.stringify(teams),
     };
 
+    // Arena (gameMode CHERRY) is a placement mode with no lanes or wards, so
+    // the role-weighted AI score is meaningless for it. Skip scoring entirely -
+    // this leaves `scores` empty, which in turn drops the AI Score and Match
+    // Placement embed fields and the placement-based flavor lines for free.
+    const arena = isArenaMatch(info.gameMode, info.queueId);
+
     let scores: PlayerScore[] = [];
-    try {
-        scores = calculateMatchScores(participants as Record<string, any>[]);
-    } catch (scoringError) {
-        console.error(
-            `[Error] Failed to calculate match scores for [${newMatchId}]:`,
-            scoringError
-        );
+    if (!arena) {
+        try {
+            scores = calculateMatchScores(
+                participants as Record<string, any>[]
+            );
+        } catch (scoringError) {
+            console.error(
+                `[Error] Failed to calculate match scores for [${newMatchId}]:`,
+                scoringError
+            );
+        }
     }
 
     let createdMatchDetail: Awaited<ReturnType<typeof createMatchDetail>>;
@@ -268,16 +286,22 @@ const handleNewMatchCompleted = async (
     console.log(
         `[Info] [${new Date().toISOString()}] Stored match detail for [${summonerName}] (matchId: ${newMatchId})`
     );
-    try {
-        await saveMatchScores(newMatchId, scores);
+    if (arena) {
         console.log(
-            `[Info] [${new Date().toISOString()}] Saved match scores for [${newMatchId}] (${scores.length} participants)`
+            `[Info] [${new Date().toISOString()}] Skipped scoring for Arena match [${newMatchId}] - Arena never counts toward competition`
         );
-    } catch (scoringError) {
-        console.error(
-            `[Error] Failed to save match scores for [${newMatchId}]:`,
-            scoringError
-        );
+    } else {
+        try {
+            await saveMatchScores(newMatchId, scores);
+            console.log(
+                `[Info] [${new Date().toISOString()}] Saved match scores for [${newMatchId}] (${scores.length} participants)`
+            );
+        } catch (scoringError) {
+            console.error(
+                `[Error] Failed to save match scores for [${newMatchId}]:`,
+                scoringError
+            );
+        }
     }
 
     const participant = participants.find(
@@ -289,8 +313,10 @@ const handleNewMatchCompleted = async (
     const summonerPlacement = myScore?.placement;
     const summonerAiScore = myScore?.score;
 
+    // The <5min remake heuristic is a Summoner's Rift rule. An Arena subteam
+    // eliminated early finishes legitimately short, so don't call it a remake.
     let result = 'Lose';
-    if (gameDuration < 300) result = 'Remake';
+    if (!arena && gameDuration < 300) result = 'Remake';
     else if (participant?.win) result = 'Win';
 
     const queueName = getQueueNameById(info.queueId ?? 0);
@@ -319,6 +345,22 @@ const handleNewMatchCompleted = async (
     const damagePerMinute = challengeNumber('damagePerMinute');
     const soloKills = challengeNumber('soloKills');
     const visionScore = participant?.visionScore;
+
+    // Arena's real placement: 8 subteams of 2, so 1st-8th. Riot exposes it as
+    // `subteamPlacement`, which twisted's DTO doesn't type - same cast as above.
+    const rawSubteamPlacement = (participant as Record<string, any> | undefined)
+        ?.subteamPlacement;
+    const arenaPlacement =
+        arena &&
+        Number.isInteger(rawSubteamPlacement) &&
+        rawSubteamPlacement >= 1 &&
+        rawSubteamPlacement <= 8
+            ? (rawSubteamPlacement as number)
+            : undefined;
+    const arenaTeamCount =
+        arena && participants.length
+            ? Math.max(1, Math.round(participants.length / 2))
+            : undefined;
     const enemyMissingPings = (participant as Record<string, any> | undefined)
         ?.enemyMissingPings as number | undefined;
     const largestMultikill = (participant as Record<string, any> | undefined)
@@ -444,7 +486,11 @@ const handleNewMatchCompleted = async (
         damagePerMinute,
         soloKills,
         visionScore,
+        isArena: arena,
+        arenaPlacement,
+        arenaTeamCount,
         flavorLine: pickFlavorLine({
+            isArena: arena,
             result: result.toLowerCase() as 'win' | 'lose' | 'remake',
             kills: participant?.kills ?? 0,
             deaths: participant?.deaths ?? 0,
@@ -462,13 +508,34 @@ const handleNewMatchCompleted = async (
     };
 
     // Streak and milestone detection - purely from data already stored.
-    let streakToAnnounce: Streak | null = null;
+    //
+    // Streaks are per-guild now, because guilds disagree on which queues count.
+    // One DB read serves every scope: fetch unfiltered, then narrow in memory
+    // once per scope and let the fan-out loop below pick the right variant.
+    const streakByScope: Record<CompetitiveScope, Streak | null> = {
+        all: null,
+        ranked: null,
+    };
     try {
         if (result !== 'Remake') {
-            const recentResults = await fetchRecentResultsForPuuid(puuid, 12);
-            const streak = computeWinLossStreak(recentResults);
-            if (streak && isStreakThreshold(streak)) {
-                streakToAnnounce = streak;
+            // 12 was enough when every queue counted. Under 'ranked' a 10-game
+            // streak needs 10 *ranked* rows in the window, so widen it.
+            const recentResults = await fetchRecentResultsForPuuid(puuid, 30);
+            const thisMatch = {
+                gameMode: info.gameMode,
+                queueId: info.queueId,
+            };
+            for (const scope of COMPETITIVE_SCOPES) {
+                // If the match that just finished doesn't count for this scope,
+                // the streak is unchanged from the last counting match and was
+                // already announced - re-announcing would double-post it.
+                if (!countsForCompetition(thisMatch, scope)) continue;
+                const streak = computeWinLossStreak(
+                    filterCompetitiveResults(recentResults, scope)
+                );
+                if (streak && isStreakThreshold(streak)) {
+                    streakByScope[scope] = streak;
+                }
             }
         }
     } catch (error) {
@@ -535,11 +602,15 @@ const handleNewMatchCompleted = async (
             }
 
             if (getNotificationPref(target, 'streaks')) {
-                if (streakToAnnounce) {
+                // Match posts above fire for every queue; only the derived
+                // posts respect this guild's competitive scope.
+                const guildStreak =
+                    streakByScope[getCompetitiveScopeFromConfig(target)];
+                if (guildStreak) {
                     await notifyStreak(messageAdapter, {
                         summonerName,
-                        kind: streakToAnnounce.kind,
-                        length: streakToAnnounce.length,
+                        kind: guildStreak.kind,
+                        length: guildStreak.length,
                         deepLolLink: summoner.deepLolLink || '',
                         discordChannelId: target.channel_id,
                     });
@@ -622,6 +693,14 @@ const handleNewMatchCompleted = async (
                 summonerName,
                 queueId: info.queueId ?? undefined,
                 queueName,
+                gameMode: info.gameMode ?? undefined,
+                isArena: arena,
+                // Arena is excluded here regardless of any guild's setting.
+                countsForCompetition: countsForCompetition(
+                    { gameMode: info.gameMode, queueId: info.queueId },
+                    'all'
+                ),
+                subteamPlacement: arenaPlacement,
                 championName: champion,
                 role: getRoleNameTranslation(role),
                 result,
@@ -657,7 +736,11 @@ const handleNewMatchCompleted = async (
                 });
             }
 
-            if (streakToAnnounce) {
+            // Events are emitted once per match, not per guild, so they carry
+            // the 'all' scope (Arena excluded, every other queue counted) and
+            // declare it - consumers re-filter from the match.completed fields.
+            const streakForEvent = streakByScope.all;
+            if (streakForEvent) {
                 await eventAdapter.emit({
                     eventId: buildMatchScopedEventId(
                         'streak',
@@ -669,8 +752,9 @@ const handleNewMatchCompleted = async (
                     matchId: newMatchId,
                     puuid,
                     summonerName,
-                    kind: streakToAnnounce.kind,
-                    length: streakToAnnounce.length,
+                    kind: streakForEvent.kind,
+                    length: streakForEvent.length,
+                    competitiveScope: 'all',
                 });
             }
 

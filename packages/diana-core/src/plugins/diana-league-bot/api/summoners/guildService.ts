@@ -1,10 +1,15 @@
 import { db } from '../utils/db.js';
+import {
+    type CompetitiveScope,
+    parseCompetitiveScope,
+} from '../../utils/queueClassification';
 
 export interface GuildConfig {
     guild_id: string;
     channel_id: string | null;
     live_posting: boolean;
     notification_prefs: Record<string, boolean> | null;
+    competitive_scope: CompetitiveScope | null;
     created_at: string;
 }
 
@@ -44,6 +49,25 @@ export const getNotificationPref = (
         return config.live_posting;
     }
     return NOTIFICATION_PREF_DEFAULTS[key];
+};
+
+/**
+ * Which queues a guild's competitive stats (MVP, Inter of the Week,
+ * leaderboards, streaks, digest) consider. Arena is excluded from both scopes -
+ * see `queueClassification`.
+ *
+ * Sync variant, for rows already loaded (e.g. the per-guild notification
+ * fan-out); use `getGuildCompetitiveScope` when you only have a guild id.
+ */
+export const getCompetitiveScopeFromConfig = (
+    config: Pick<GuildConfig, 'competitive_scope'> | null | undefined
+): CompetitiveScope => parseCompetitiveScope(config?.competitive_scope);
+
+export const getGuildCompetitiveScope = async (
+    guildId: string | null | undefined
+): Promise<CompetitiveScope> => {
+    if (!guildId) return parseCompetitiveScope(undefined);
+    return getCompetitiveScopeFromConfig(await getGuildConfig(guildId));
 };
 
 export interface GuildSummonerRow {
@@ -109,6 +133,20 @@ export const setGuildLivePosting = async (
          ON CONFLICT (guild_id) DO UPDATE SET live_posting = EXCLUDED.live_posting
          RETURNING *`,
         [guildId, enabled]
+    );
+    return result.rows[0];
+};
+
+export const setGuildCompetitiveScope = async (
+    guildId: string,
+    scope: CompetitiveScope
+): Promise<GuildConfig> => {
+    const result = await db.query(
+        `INSERT INTO guild_config (guild_id, competitive_scope)
+         VALUES ($1, $2)
+         ON CONFLICT (guild_id) DO UPDATE SET competitive_scope = EXCLUDED.competitive_scope
+         RETURNING *`,
+        [guildId, scope]
     );
     return result.rows[0];
 };
@@ -187,13 +225,15 @@ export interface GuildNotificationTarget {
     channel_id: string;
     live_posting: boolean;
     notification_prefs: Record<string, boolean> | null;
+    competitive_scope: CompetitiveScope | null;
 }
 
 export const getGuildsTrackingSummoner = async (
     puuid: string
 ): Promise<GuildNotificationTarget[]> => {
     const result = await db.query(
-        `SELECT gc.guild_id, gc.channel_id, gc.live_posting, gc.notification_prefs
+        `SELECT gc.guild_id, gc.channel_id, gc.live_posting, gc.notification_prefs,
+                gc.competitive_scope
          FROM guild_summoners gs
          JOIN guild_config gc ON gc.guild_id = gs.guild_id
          WHERE gs.puuid = $1

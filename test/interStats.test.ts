@@ -476,3 +476,44 @@ describe('interStats', () => {
         });
     });
 });
+
+describe('getInterCandidatesSince competitive scoping', () => {
+    beforeEach(() => {
+        queryMock.mockReset();
+        queryMock.mockResolvedValue({ rows: [] });
+    });
+
+    const lastQuery = () => queryMock.mock.calls[0][0] as string;
+
+    it('always excludes Arena, even under the default scope', async () => {
+        await getInterCandidatesSince(0);
+        expect(lastQuery()).toContain("<> 'CHERRY'");
+        expect(lastQuery()).toContain('NOT IN (1700,1701,1704,1710,1750)');
+    });
+
+    it("does not restrict to ranked queues under 'all'", async () => {
+        await getInterCandidatesSince(0, { scope: 'all' });
+        expect(lastQuery()).not.toContain('IN (420,440)');
+    });
+
+    it("restricts to Solo/Duo and Flex under 'ranked'", async () => {
+        await getInterCandidatesSince(0, { scope: 'ranked' });
+        expect(lastQuery()).toContain('md."queueId" IN (420,440)');
+    });
+
+    it('selects the columns the filter depends on', async () => {
+        await getInterCandidatesSince(0);
+        expect(lastQuery()).toContain('md."queueId"');
+        expect(lastQuery()).toContain('md."gameMode"');
+    });
+
+    it('keeps bind-parameter numbering intact alongside other options', async () => {
+        await getInterCandidatesSince(123, {
+            guildId: 'g1',
+            targetPuuid: 'p1',
+            scope: 'ranked',
+        });
+        const [, params] = queryMock.mock.calls[0];
+        expect(params).toEqual([123, 'g1', 'p1']);
+    });
+});

@@ -1,4 +1,9 @@
 import { db } from '../api/utils/db';
+import {
+    buildCompetitiveSqlFilter,
+    DEFAULT_COMPETITIVE_SCOPE,
+    type CompetitiveScope,
+} from './queueClassification';
 
 export const ONE_WEEK_IN_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -30,6 +35,7 @@ export interface RawMatchRow {
     deepLolLink?: string | null;
     matchId: string;
     queueId?: number | string | null;
+    gameMode?: string | null;
     gameDuration?: number | string | null;
     participants: string | RiotParticipant[];
     gameCreation: string | number | null;
@@ -64,6 +70,13 @@ export interface InterStatsOptions {
     targetPuuid?: string;
     /** Restrict aggregation to summoners tracked in this guild */
     guildId?: string;
+    /**
+     * Which queues count. Resolve it at the call site via
+     * `getGuildCompetitiveScope(interaction.guildId)` - not here, because
+     * callers like /summoner deliberately pass no guildId. Defaults to 'all'.
+     * Arena is excluded either way.
+     */
+    scope?: CompetitiveScope;
 }
 
 export function parseParticipants(
@@ -93,7 +106,7 @@ function buildDisplayName(gameName: string, tagLine: string) {
 
 export async function getInterCandidatesSince(
     sinceTimestamp: number,
-    { targetPuuid, guildId }: InterStatsOptions = {}
+    { targetPuuid, guildId, scope }: InterStatsOptions = {}
 ): Promise<InterCandidate[]> {
     const params: Array<string | number> = [sinceTimestamp];
 
@@ -113,6 +126,8 @@ export async function getInterCandidatesSince(
             md."participants",
             md."gameCreation",
             md."gameDuration",
+            md."queueId",
+            md."gameMode",
             ms."score" AS "aiScore"
         FROM summoners s
         JOIN match_details md ON md."entryPlayerPuuid" = s."puuid"
@@ -120,6 +135,7 @@ export async function getInterCandidatesSince(
         LEFT JOIN match_scores ms ON ms."matchId" = md."matchId" AND ms."puuid" = s."puuid"
         WHERE md."gameCreation" IS NOT NULL
           AND md."gameCreation" >= $1
+          ${buildCompetitiveSqlFilter('md', scope ?? DEFAULT_COMPETITIVE_SCOPE)}
     `;
 
     if (targetPuuid) {

@@ -86,6 +86,25 @@ describe('buildMatchEndMessage payload', () => {
         ).toMatchSnapshot();
     });
 
+    it('arena win - subteam placement, no AI score, no vision', async () => {
+        expect(
+            await buildMatchEndMessage({
+                ...baseMatchInput,
+                queueName: 'Arena',
+                role: 'N/A',
+                lpChangeMsg: null,
+                kdaStr: '6/5/7',
+                damage: 39933,
+                killParticipationPct: 16,
+                damagePerMinute: 1845,
+                visionScore: 0,
+                isArena: true,
+                arenaPlacement: 3,
+                arenaTeamCount: 8,
+            })
+        ).toMatchSnapshot();
+    });
+
     it('non-ranked, non-role queue (ARAM) omits rank and role fields', async () => {
         expect(
             await buildMatchEndMessage({

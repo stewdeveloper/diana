@@ -4,7 +4,12 @@ import { buildPeriodicEventId, toIsoWeek } from '../../../core/eventTypes';
 import {
     getAllGuildConfigs,
     getNotificationPref,
+    getGuildCompetitiveScope,
 } from '../api/summoners/guildService';
+import {
+    buildCompetitiveSqlFilter,
+    type CompetitiveScope,
+} from '../utils/queueClassification';
 import { fetchRankHistory } from '../api/summoners/summonerService';
 import { getTotalPoints } from '../api/utils/rankService';
 import {
@@ -31,14 +36,24 @@ function displayName(gameName: string, tagLine: string): string {
 
 async function fetchWeeklyScoredGames(
     guildId: string,
-    sinceTimestamp: number
+    sinceTimestamp: number,
+    scope: CompetitiveScope
 ): Promise<ScoredGameRow[]> {
+    // EXISTS rather than a JOIN: match_scores holds every participant, but
+    // match_details only holds rows for *entry* players. Joining would silently
+    // drop a summoner added to the guild after a match; EXISTS only ever
+    // removes Arena/non-ranked matches, so it is purely additive.
     const result = await db.query(
         `SELECT ms."matchId", ms."puuid", ms."score", s."gameName", s."tagLine"
          FROM match_scores ms
          JOIN guild_summoners gs ON gs.puuid = ms."puuid" AND gs.guild_id = $1
          JOIN summoners s ON s.puuid = ms."puuid"
          WHERE ms."createdAt" >= to_timestamp($2 / 1000.0)
+           AND EXISTS (
+               SELECT 1 FROM match_details md
+               WHERE md."matchId" = ms."matchId"
+                 ${buildCompetitiveSqlFilter('md', scope)}
+           )
          ORDER BY ms."score" DESC`,
         [guildId, sinceTimestamp]
     );
@@ -94,8 +109,10 @@ export async function buildWeeklyDigestPayload(
     guildId: string
 ): Promise<MessagePayload | null> {
     const sinceTimestamp = Date.now() - ONE_WEEK_IN_MS;
+    const scope = await getGuildCompetitiveScope(guildId);
     const candidates = await getInterCandidatesSince(sinceTimestamp, {
         guildId,
+        scope,
     });
     if (candidates.length === 0) return null;
 
@@ -155,7 +172,8 @@ export async function buildWeeklyDigestPayload(
     try {
         const scoredGames = await fetchWeeklyScoredGames(
             guildId,
-            sinceTimestamp
+            sinceTimestamp,
+            scope
         );
         if (scoredGames.length > 0) {
             const best = scoredGames[0];

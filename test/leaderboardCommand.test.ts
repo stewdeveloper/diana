@@ -116,6 +116,7 @@ function getTotalPointsImpl(
 }
 
 jest.mock('diana-core', () => ({
+    getGuildCompetitiveScope: jest.fn().mockResolvedValue('all'),
     getSummonersForGuild: getSummonersForGuildMock,
     getLatestRanksForPuuids: getLatestRanksForPuuidsMock,
     getInterCandidatesLastWeek: getInterCandidatesLastWeekMock,
@@ -307,6 +308,7 @@ describe('leaderboardCommand', () => {
 
             expect(getInterCandidatesLastWeekMock).toHaveBeenCalledWith({
                 guildId: 'guild-1',
+                scope: 'all',
             });
             const description =
                 interaction.editReply.mock.calls[0][0].embeds[0].data

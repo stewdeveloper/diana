@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { RANKED_QUEUE_TAGS } from '../../utils/queueClassification';
 
 const VERSIONS_URL = 'https://ddragon.leagueoflegends.com/api/versions.json';
 const CHAMPION_URL = (version: string) =>
@@ -81,8 +82,13 @@ export const getQueueNameById = (queueId: number) => {
         [900, 'ARURF'],
         [1020, 'One for All'],
         [1400, 'Ultimate Spellbook'],
+        // Riot mints new Arena queue IDs regularly. These are the names only -
+        // never detect Arena by queue ID, use `isArenaMatch` (gameMode CHERRY).
         [1700, 'Arena'],
+        [1701, 'Arena'],
+        [1704, 'Arena'],
         [1710, 'Arena'],
+        [1750, 'Arena'],
         [1900, 'URF'],
         [2000, 'Tutorial'],
         [2010, 'Tutorial'],
@@ -91,13 +97,8 @@ export const getQueueNameById = (queueId: number) => {
     return queueMap.get(queueId) || `Unknown Queue (ID: ${queueId})`;
 };
 
-export const getRankTagsById = (queueId: number) => {
-    const queueMap = new Map<number, string>([
-        [420, 'RANKED_SOLO_5x5'],
-        [440, 'RANKED_FLEX_SR'],
-    ]);
-    return queueMap.get(queueId) || false;
-};
+export const getRankTagsById = (queueId: number) =>
+    RANKED_QUEUE_TAGS.get(queueId) || false;
 
 export const getRoleNameTranslation = (role: string) => {
     const roleMap = new Map<string, string>([

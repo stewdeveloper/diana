@@ -43,6 +43,16 @@ interface MatchEndMessageInput {
     damagePerMinute?: number;
     soloKills?: number;
     visionScore?: number;
+    /**
+     * Arena (gameMode CHERRY). Arena is never scored, so this suppresses the
+     * AI Score and Match Placement fields, plus Vision Score - Arena has no
+     * wards, so it is always 0 and the `!= null` guard would still render it.
+     */
+    isArena?: boolean;
+    /** Riot's `subteamPlacement`: Arena's real placement, 1st-8th. */
+    arenaPlacement?: number;
+    /** Number of Arena subteams, normally 8. */
+    arenaTeamCount?: number;
     /** Roast/praise line appended to the embed description */
     flavorLine?: string | null;
 }
@@ -84,6 +94,9 @@ export async function buildMatchEndMessage({
     damagePerMinute,
     soloKills,
     visionScore,
+    isArena,
+    arenaPlacement,
+    arenaTeamCount,
     flavorLine,
 }: MatchEndMessageInput): Promise<MessagePayload> {
     const colorHex = resultColors.get(result.toLowerCase()) || 0x95a5a6;
@@ -123,7 +136,7 @@ export async function buildMatchEndMessage({
             inline: true,
         });
     }
-    if (visionScore != null) {
+    if (!isArena && visionScore != null) {
         fields.push({
             name: '👁️ **Vision Score**',
             value: `**${visionScore}**`,
@@ -137,14 +150,22 @@ export async function buildMatchEndMessage({
             inline: true,
         });
     }
-    if (placement != null && totalPlayers != null) {
+    if (!isArena && placement != null && totalPlayers != null) {
         fields.push({
             name: '🏆 **Match Placement**',
             value: `**${getOrdinal(placement)}**`,
             inline: true,
         });
     }
-    if (aiScore != null) {
+    // Arena's real result: Riot's subteam placement, not our AI-score rank.
+    if (isArena && arenaPlacement != null) {
+        fields.push({
+            name: '🏟️ **Arena Placement**',
+            value: `**${getOrdinal(arenaPlacement)} of ${arenaTeamCount ?? 8}**`,
+            inline: true,
+        });
+    }
+    if (!isArena && aiScore != null) {
         fields.push({
             name: '🤖 **AI Score**',
             value: `**${aiScore}**`,

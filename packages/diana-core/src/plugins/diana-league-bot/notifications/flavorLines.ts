@@ -16,10 +16,15 @@ export interface FlavorContext {
     visionScore?: number;
     enemyMissingPings?: number;
     largestMultikill?: number;
-    /** 1-based AI-score placement across the whole lobby */
+    /**
+     * 1-based AI-score placement across the whole lobby. Always undefined for
+     * Arena, which is never scored - so the placement-based rules can't fire.
+     */
     placement?: number;
     totalPlayers?: number;
     gameLengthSeconds?: number;
+    /** Arena (gameMode CHERRY): suppresses rules that assume Summoner's Rift. */
+    isArena?: boolean;
 }
 
 type FlavorLine = (ctx: FlavorContext) => string;
@@ -130,7 +135,9 @@ export const FLAVOR_RULES: FlavorRule[] = [
     {
         id: 'vision-blind',
         priority: 55,
+        // Arena has no wards, so every long Arena game would trip this.
         predicate: (ctx) =>
+            !ctx.isArena &&
             (ctx.visionScore ?? Infinity) <= 5 &&
             (ctx.gameLengthSeconds ?? 0) >= 1200,
         lines: [

@@ -1,5 +1,60 @@
 // Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
 
+exports[`buildMatchEndMessage payload arena win - subteam placement, no AI score, no vision 1`] = `
+{
+  "colorHex": 2664261,
+  "description": "TestPlayer has completed a match!",
+  "fields": [
+    {
+      "inline": true,
+      "name": "🏁 **Result**",
+      "value": "**Win**",
+    },
+    {
+      "inline": true,
+      "name": "🛡️ **Champion**",
+      "value": "**Ahri**",
+    },
+    {
+      "inline": true,
+      "name": "🕹️ **Queue**",
+      "value": "**Arena**",
+    },
+    {
+      "inline": true,
+      "name": "⚔️ **KDA**",
+      "value": "**6/5/7**",
+    },
+    {
+      "inline": true,
+      "name": "💥 **Damage Dealt**",
+      "value": "**39933**",
+    },
+    {
+      "inline": true,
+      "name": "🤝 **Kill Participation**",
+      "value": "**16%**",
+    },
+    {
+      "inline": true,
+      "name": "📊 **Damage / Min**",
+      "value": "**1845**",
+    },
+    {
+      "inline": true,
+      "name": "🏟️ **Arena Placement**",
+      "value": "**3rd of 8**",
+    },
+  ],
+  "footer": "Match Summary • Length 30:30",
+  "supportUrl": "https://buymeacoffee.com/yngstew",
+  "thumbnailUrl": "https://ddragon.leagueoflegends.com/cdn/15.2.1/img/champion/Ahri.png",
+  "timestamp": "2026-07-25T12:00:00.000Z",
+  "title": "🎮 **Match Summary**",
+  "url": "https://deeplol.gg/test",
+}
+`;
+
 exports[`buildMatchEndMessage payload first place in lobby 1`] = `
 {
   "colorHex": 2664261,

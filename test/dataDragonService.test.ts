@@ -39,9 +39,11 @@ describe('getQueueNameById', () => {
         expect(getQueueNameById(900)).toBe('ARURF');
     });
 
-    it('returns "Arena" for queues 1700 and 1710', () => {
-        expect(getQueueNameById(1700)).toBe('Arena');
-        expect(getQueueNameById(1710)).toBe('Arena');
+    it('returns "Arena" for every known Arena queue ID', () => {
+        // 1750 is the one that showed up as "Unknown Queue (ID: 1750)".
+        for (const id of [1700, 1701, 1704, 1710, 1750]) {
+            expect(getQueueNameById(id)).toBe('Arena');
+        }
     });
 
     it('returns "Quickplay" for queue 490', () => {

@@ -73,6 +73,7 @@ jest.mock('discord.js', () => ({
 }));
 
 jest.mock('diana-core', () => ({
+    getGuildCompetitiveScope: jest.fn().mockResolvedValue('all'),
     db: { query: dbQueryMock },
     getDuoRecord: getDuoRecordMock,
     getInterCandidatesLastWeek: getInterCandidatesLastWeekMock,
@@ -212,7 +213,7 @@ describe('compareCommand', () => {
 
         await compareCommand.execute(interaction as any);
 
-        expect(getDuoRecordMock).toHaveBeenCalledWith('pa', 'pb');
+        expect(getDuoRecordMock).toHaveBeenCalledWith('pa', 'pb', 0, 'all');
         const reply = interaction.editReply.mock.calls[0][0];
         const embed = reply.embeds[0];
         expect(embed.data.title).toContain('Alpha#EUW');

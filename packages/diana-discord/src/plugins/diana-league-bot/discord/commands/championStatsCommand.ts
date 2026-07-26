@@ -14,6 +14,9 @@ import {
     fetchChampionData,
     calculateWinRatePercentage,
     getChampionThumbnail,
+    getGuildCompetitiveScope,
+    buildCompetitiveSqlFilter,
+    type CompetitiveScope,
 } from 'diana-core';
 
 interface RiotParticipant {
@@ -142,12 +145,21 @@ function formatDate(timestamp: number) {
 
 async function fetchChampionMatches(
     puuid: string,
-    championName: string
+    championName: string,
+    scope: CompetitiveScope,
+    includeArena: boolean
 ): Promise<ParsedMatch[]> {
+    // With include-arena the stats are descriptive rather than competitive, so
+    // drop the filter entirely - otherwise an Arena-only champion shows nothing.
+    const competitiveFilter = includeArena
+        ? ''
+        : buildCompetitiveSqlFilter('match_details', scope);
     const query = `
-        SELECT "matchId", "queueId", "gameDuration", "participants", "gameCreation"
+        SELECT "matchId", "queueId", "gameMode", "gameDuration", "participants",
+               "gameCreation"
         FROM match_details
         WHERE "entryPlayerPuuid" = $1
+          ${competitiveFilter}
           AND EXISTS (
               SELECT 1
               FROM jsonb_array_elements("participants") AS p(elem)
@@ -355,11 +367,21 @@ export const championStatsCommand: SlashCommand = {
                 });
             }
             return option;
-        }),
+        })
+        .addBooleanOption((option) =>
+            option
+                .setName('include-arena')
+                .setDescription(
+                    'Include Arena games. They never count toward competitive stats.'
+                )
+                .setRequired(false)
+        ),
     execute: async (interaction) => {
         const name = interaction.options.getString('name', true);
         const tag = interaction.options.getString('tag');
         const championInput = interaction.options.getString('champion', true);
+        const includeArena =
+            interaction.options.getBoolean('include-arena') ?? false;
         const region =
             interaction.options.getString('region') ||
             Constants.Regions.EU_WEST;
@@ -405,14 +427,20 @@ export const championStatsCommand: SlashCommand = {
             const searchChampion = resolvedChampion?.id ?? championInput;
             const displayChampion = resolvedChampion?.name ?? championInput;
 
+            const scope = await getGuildCompetitiveScope(interaction.guildId);
             const championMatches = await fetchChampionMatches(
                 puuid,
-                searchChampion
+                searchChampion,
+                scope,
+                includeArena
             );
 
             if (championMatches.length === 0) {
+                const hint = includeArena
+                    ? ''
+                    : ' Arena games are excluded - add `include-arena: true` to count them.';
                 await interaction.editReply(
-                    `No recorded matches found for **${gameName}#${tagLine}** on **${displayChampion}**.`
+                    `No recorded matches found for **${gameName}#${tagLine}** on **${displayChampion}**.${hint}`
                 );
                 return;
             }

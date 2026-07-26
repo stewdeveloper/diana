@@ -142,6 +142,10 @@ jest.mock('discord.js', () => ({
 }));
 
 jest.mock('diana-core', () => ({
+    getGuildCompetitiveScope: jest.fn().mockResolvedValue('all'),
+    setGuildCompetitiveScope: jest.fn().mockResolvedValue({}),
+    getCompetitiveScopeFromConfig: (config: any) =>
+        config?.competitive_scope === 'ranked' ? 'ranked' : 'all',
     getGuildConfig: getGuildConfigMock,
     setGuildLivePosting: setGuildLivePostingMock,
     setGuildNotificationPref: setGuildNotificationPrefMock,

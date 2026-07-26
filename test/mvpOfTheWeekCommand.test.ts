@@ -63,6 +63,7 @@ jest.mock('discord.js', () => ({
 }));
 
 jest.mock('diana-core', () => ({
+    getGuildCompetitiveScope: jest.fn().mockResolvedValue('all'),
     getInterCandidatesLastWeek: getInterCandidatesLastWeekMock,
     backfillMissingScores: backfillMissingScoresMock,
     ONE_WEEK_IN_MS: 7 * 24 * 60 * 60 * 1000,
@@ -114,7 +115,7 @@ describe('mvpOfTheWeekCommand', () => {
     });
 
     describe('execute', () => {
-        it('passes the guildId through to the stats query', async () => {
+        it('passes the guildId and competitive scope through to the stats query', async () => {
             getInterCandidatesLastWeekMock.mockResolvedValue([makeCandidate()]);
             const interaction = makeInteraction('guild-42');
 
@@ -122,6 +123,7 @@ describe('mvpOfTheWeekCommand', () => {
 
             expect(getInterCandidatesLastWeekMock).toHaveBeenCalledWith({
                 guildId: 'guild-42',
+                scope: 'all',
             });
         });
 

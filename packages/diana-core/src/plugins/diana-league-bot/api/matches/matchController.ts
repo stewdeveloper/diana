@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { getParamValue } from '../../../../core/api/requestUtils';
+import { isArenaMatch } from '../../utils/queueClassification';
 import {
     createMatchDetail,
     getMatchDetailsByPuuid,
@@ -142,32 +143,47 @@ export const getRecentMatchDetailsHandler = async (
         });
         const matches = await Promise.all(
             rows.map(async (row: any) => {
-                let entry = row.entryParticipant ?? null;
-                if (!entry) {
-                    const participantsRaw = row.participants ?? [];
-                    let participants: any[] = [];
-                    if (Array.isArray(participantsRaw)) {
-                        participants = participantsRaw;
-                    } else if (typeof participantsRaw === 'string') {
-                        try {
-                            const parsed = JSON.parse(participantsRaw);
-                            participants = Array.isArray(parsed) ? parsed : [];
-                        } catch {
-                            participants = [];
-                        }
+                const participantsRaw = row.participants ?? [];
+                let participants: any[] = [];
+                if (Array.isArray(participantsRaw)) {
+                    participants = participantsRaw;
+                } else if (typeof participantsRaw === 'string') {
+                    try {
+                        const parsed = JSON.parse(participantsRaw);
+                        participants = Array.isArray(parsed) ? parsed : [];
+                    } catch {
+                        participants = [];
                     }
-                    entry = participants.find(
+                }
+                const entry =
+                    row.entryParticipant ??
+                    participants.find(
                         (p: any) => p.puuid === row.entryPlayerPuuid
                     );
-                }
+
+                const arena = isArenaMatch(row.gameMode, row.queueId);
                 const gameDuration = row.gameDuration ?? 0;
                 let result = row.match_result || 'Lose';
                 if (!row.match_result) {
-                    if (gameDuration < 300) result = 'Remake';
+                    // The <5min remake rule is Summoner's Rift only - an Arena
+                    // subteam eliminated early legitimately finishes short.
+                    if (!arena && gameDuration < 300) result = 'Remake';
                     else if (entry?.win) result = 'Win';
                 }
 
                 const queueName = getQueueNameById(row.queueId ?? 0);
+                const rawSubteamPlacement = (entry as any)?.subteamPlacement;
+                const arenaPlacement =
+                    arena &&
+                    Number.isInteger(rawSubteamPlacement) &&
+                    rawSubteamPlacement >= 1 &&
+                    rawSubteamPlacement <= 8
+                        ? (rawSubteamPlacement as number)
+                        : undefined;
+                const arenaTeamCount =
+                    arena && participants.length
+                        ? Math.max(1, Math.round(participants.length / 2))
+                        : undefined;
                 const kdaStr = `${entry?.kills ?? 0}/${entry?.deaths ?? 0}/${
                     entry?.assists ?? 0
                 }`;
@@ -212,6 +228,9 @@ export const getRecentMatchDetailsHandler = async (
                     kdaStr,
                     damage,
                     deepLolLink,
+                    isArena: arena,
+                    arenaPlacement,
+                    arenaTeamCount,
                 });
                 const rankMovement =
                     previousRank && rankInfo

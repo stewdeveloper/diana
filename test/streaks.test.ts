@@ -9,6 +9,7 @@ jest.mock(
 
 import { db } from '../packages/diana-core/src/plugins/diana-league-bot/api/utils/db';
 import {
+    filterCompetitiveResults,
     computeWinLossStreak,
     isStreakThreshold,
     detectRankMilestone,
@@ -22,9 +23,11 @@ const queryMock = db.query as unknown as jest.Mock;
 function result(
     win: boolean | null,
     isRemake = false,
-    matchId = 'm'
+    matchId = 'm',
+    queueId: number | null = 420,
+    gameMode: string | null = 'CLASSIC'
 ): MatchResultRow {
-    return { matchId, win, isRemake };
+    return { matchId, win, isRemake, queueId, gameMode };
 }
 
 describe('computeWinLossStreak', () => {
@@ -210,8 +213,20 @@ describe('fetchRecentResultsForPuuid', () => {
         const results = await fetchRecentResultsForPuuid('p1', 10);
 
         expect(results).toEqual([
-            { matchId: 'm2', win: true, isRemake: false },
-            { matchId: 'm1', win: false, isRemake: true },
+            {
+                matchId: 'm2',
+                win: true,
+                isRemake: false,
+                queueId: null,
+                gameMode: null,
+            },
+            {
+                matchId: 'm1',
+                win: false,
+                isRemake: true,
+                queueId: null,
+                gameMode: null,
+            },
         ]);
         const [query, params] = queryMock.mock.calls[0];
         expect(query).toContain('entryPlayerPuuid');
@@ -233,5 +248,58 @@ describe('fetchRecentResultsForPuuid', () => {
 
         const results = await fetchRecentResultsForPuuid('p1');
         expect(results[0].win).toBeNull();
+    });
+});
+
+describe('filterCompetitiveResults', () => {
+    const arena = result(true, false, 'arena-1', 1750, 'CHERRY');
+    const aram = result(true, false, 'aram-1', 450, 'ARAM');
+    const solo = result(true, false, 'solo-1', 420, 'CLASSIC');
+
+    it('drops Arena under every scope', () => {
+        expect(filterCompetitiveResults([arena, solo], 'all')).toEqual([solo]);
+        expect(filterCompetitiveResults([arena, solo], 'ranked')).toEqual([
+            solo,
+        ]);
+    });
+
+    it("keeps non-ranked queues under 'all'", () => {
+        expect(filterCompetitiveResults([aram, solo], 'all')).toEqual([
+            aram,
+            solo,
+        ]);
+    });
+
+    it("keeps only ranked queues under 'ranked'", () => {
+        expect(filterCompetitiveResults([aram, solo], 'ranked')).toEqual([
+            solo,
+        ]);
+    });
+
+    it('lets an Arena game sit inside a streak without breaking it', () => {
+        // Arena is removed rather than counted as a loss, so three ranked wins
+        // either side of an Arena game are still a 3-win streak.
+        const rows = [
+            result(true, false, 'w3', 420, 'CLASSIC'),
+            arena,
+            result(true, false, 'w2', 420, 'CLASSIC'),
+            result(true, false, 'w1', 420, 'CLASSIC'),
+        ];
+        const streak = computeWinLossStreak(
+            filterCompetitiveResults(rows, 'all')
+        );
+        expect(streak).toEqual({ kind: 'win', length: 3 });
+    });
+
+    it('an Arena loss does not end a win streak', () => {
+        const rows = [
+            result(false, false, 'arena-loss', 1750, 'CHERRY'),
+            result(true, false, 'w2', 420, 'CLASSIC'),
+            result(true, false, 'w1', 420, 'CLASSIC'),
+        ];
+        expect(computeWinLossStreak(rows)?.kind).toBe('loss');
+        expect(
+            computeWinLossStreak(filterCompetitiveResults(rows, 'all'))
+        ).toEqual({ kind: 'win', length: 2 });
     });
 });

@@ -19,8 +19,11 @@ import {
     rankColors,
     getRankedEmblem,
     getInterCandidatesLastWeek,
+    getGuildCompetitiveScope,
+    countsForCompetition,
     parseParticipants,
     ONE_WEEK_IN_MS,
+    type CompetitiveScope,
     type InterCandidate,
     type RawMatchRow,
     type RiotParticipant,
@@ -32,6 +35,7 @@ interface ParsedMatch {
     id: string;
     createdAt: number;
     queueId: number;
+    gameMode: string | null;
     duration: number;
     participant: RiotParticipant;
 }
@@ -86,8 +90,11 @@ function formatDate(timestamp: number) {
 async function fetchRecentMatches(puuid: string): Promise<ParsedMatch[]> {
     const since = Date.now() - ONE_WEEK_IN_MS;
 
+    // Deliberately unfiltered: the recent-matches list shows every queue,
+    // including Arena. Only the W/L summary narrows - see summarizePeriod.
     const query = `
-        SELECT "matchId", "gameCreation", "gameDuration", "queueId", "participants"
+        SELECT "matchId", "gameCreation", "gameDuration", "queueId", "gameMode",
+               "participants"
         FROM match_details
         WHERE "entryPlayerPuuid" = $1
           AND "gameCreation" >= $2
@@ -107,6 +114,7 @@ async function fetchRecentMatches(puuid: string): Promise<ParsedMatch[]> {
                 id: row.matchId,
                 createdAt: toNumber(row.gameCreation),
                 queueId: toNumber(row.queueId),
+                gameMode: row.gameMode ?? null,
                 duration: toNumber(row.gameDuration),
                 participant,
             } satisfies ParsedMatch;
@@ -116,17 +124,24 @@ async function fetchRecentMatches(puuid: string): Promise<ParsedMatch[]> {
         );
 }
 
-function summarizePeriod(matches: ParsedMatch[]): YearlyStats {
-    return matches.reduce<YearlyStats>(
-        (acc, match) => {
-            const result = getResult(match.participant, match.duration);
-            if (result === 'WIN') acc.wins += 1;
-            else if (result === 'LOSS') acc.losses += 1;
-            else acc.remakes += 1;
-            return acc;
-        },
-        { wins: 0, losses: 0, remakes: 0 }
-    );
+function summarizePeriod(
+    matches: ParsedMatch[],
+    scope: CompetitiveScope
+): YearlyStats {
+    // The list above shows every queue; the W/L record only counts competitive
+    // ones, so Arena is visible but never inflates the record.
+    return matches
+        .filter((match) => countsForCompetition(match, scope))
+        .reduce<YearlyStats>(
+            (acc, match) => {
+                const result = getResult(match.participant, match.duration);
+                if (result === 'WIN') acc.wins += 1;
+                else if (result === 'LOSS') acc.losses += 1;
+                else acc.remakes += 1;
+                return acc;
+            },
+            { wins: 0, losses: 0, remakes: 0 }
+        );
 }
 
 function buildRecentMatches(matches: ParsedMatch[]) {
@@ -295,9 +310,12 @@ export const summonerInfoCommand: SlashCommand = {
             const { puuid, gameName, tagLine, tier, rank, lp, deepLolLink } =
                 summonerRecord as any;
 
+            // No guildId here on purpose: passing one would activate the
+            // guild_summoners join and restrict /summoner to tracked players.
+            const scope = await getGuildCompetitiveScope(interaction.guildId);
             const [matches, iotwCandidates] = (await Promise.all([
                 fetchRecentMatches(puuid),
-                getInterCandidatesLastWeek({ targetPuuid: puuid }),
+                getInterCandidatesLastWeek({ targetPuuid: puuid, scope }),
             ])) as [ParsedMatch[], InterCandidate[]];
 
             const soloRank = await getMostRecentRankByParticipantIdAndQueueType(
@@ -367,7 +385,7 @@ export const summonerInfoCommand: SlashCommand = {
                 console.error('Failed to build LP sparkline:', sparklineError);
             }
 
-            const stats = summarizePeriod(matches);
+            const stats = summarizePeriod(matches, scope);
             const weeklyWinRate = formatWinRate(stats);
             const recentMatches = buildRecentMatches(matches);
             const iotwStats = iotwCandidates.find(

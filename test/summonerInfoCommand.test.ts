@@ -136,6 +136,10 @@ jest.mock('discord.js', () => ({
 }));
 
 jest.mock('diana-core', () => ({
+    getGuildCompetitiveScope: jest.fn().mockResolvedValue('all'),
+    countsForCompetition: jest.requireActual(
+        '../packages/diana-core/src/plugins/diana-league-bot/utils/queueClassification'
+    ).countsForCompetition,
     getSummonerByAccountName: getSummonerByAccountNameMock,
     searchSummonerGameNames: searchSummonerGameNamesMock,
     searchSummonerTags: searchSummonerTagsMock,

@@ -585,3 +585,93 @@ describe('buildMatchEndMessage rich stats', () => {
         expect(msg.description).toBe('TestPlayer has completed a match!');
     });
 });
+
+// ---------------------------------------------------------------------------
+// Arena (gameMode CHERRY)
+// ---------------------------------------------------------------------------
+
+describe('buildMatchEndMessage for Arena', () => {
+    const arenaInput = {
+        ...baseMatchInput,
+        queueName: 'Arena',
+        role: 'N/A',
+        isArena: true,
+        arenaPlacement: 3,
+        arenaTeamCount: 8,
+    };
+
+    const fieldNames = (
+        msg: Awaited<ReturnType<typeof buildMatchEndMessage>>
+    ) => msg.fields!.map((f) => f.name);
+
+    it('renders Riot subteam placement as "3rd of 8"', async () => {
+        const msg = await buildMatchEndMessage(arenaInput);
+        const placement = msg.fields!.find((f) =>
+            f.name.includes('Arena Placement')
+        );
+        expect(placement).toBeDefined();
+        expect(placement!.value).toContain('3rd of 8');
+    });
+
+    it('omits the AI Score field - Arena is never scored', async () => {
+        const msg = await buildMatchEndMessage({ ...arenaInput, aiScore: 38 });
+        expect(fieldNames(msg).some((n) => n.includes('AI Score'))).toBe(false);
+    });
+
+    it('omits Vision Score - Arena has no wards, so it is always 0', async () => {
+        const msg = await buildMatchEndMessage({
+            ...arenaInput,
+            visionScore: 0,
+        });
+        expect(fieldNames(msg).some((n) => n.includes('Vision Score'))).toBe(
+            false
+        );
+    });
+
+    it('omits the AI-score Match Placement field', async () => {
+        const msg = await buildMatchEndMessage({
+            ...arenaInput,
+            placement: 10,
+            totalPlayers: 16,
+        });
+        expect(fieldNames(msg).some((n) => n.includes('Match Placement'))).toBe(
+            false
+        );
+    });
+
+    it('keeps KDA, damage, damage/min and kill participation', async () => {
+        const msg = await buildMatchEndMessage({
+            ...arenaInput,
+            killParticipationPct: 16,
+            damagePerMinute: 1845,
+        });
+        const names = fieldNames(msg).join(' ');
+        expect(names).toContain('KDA');
+        expect(names).toContain('Damage Dealt');
+        expect(names).toContain('Damage / Min');
+        expect(names).toContain('Kill Participation');
+    });
+
+    it('omits rank and LP fields, since Arena carries no rank', async () => {
+        const msg = await buildMatchEndMessage(arenaInput);
+        const names = fieldNames(msg).join(' ');
+        expect(names).not.toContain('Rank Update');
+        expect(names).not.toContain('LP Change');
+        expect(names).not.toContain('Role');
+    });
+
+    it('leaves non-Arena embeds untouched', async () => {
+        const msg = await buildMatchEndMessage({
+            ...baseMatchInput,
+            placement: 3,
+            totalPlayers: 10,
+            aiScore: 72,
+            visionScore: 21,
+        });
+        const names = fieldNames(msg).join(' ');
+        expect(names).toContain('AI Score');
+        expect(names).toContain('Vision Score');
+        expect(names).toContain('Match Placement');
+        expect(names).not.toContain('Arena Placement');
+    });
+});

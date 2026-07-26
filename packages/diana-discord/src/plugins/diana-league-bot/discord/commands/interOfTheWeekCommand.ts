@@ -2,6 +2,7 @@ import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import type { SlashCommand } from '../../../../discord/commandTypes';
 import {
     getInterCandidatesLastWeek,
+    getGuildCompetitiveScope,
     backfillMissingScores,
     ONE_WEEK_IN_MS,
     type InterCandidate,
@@ -150,7 +151,11 @@ export const interOfTheWeekCommand: SlashCommand = {
 
         try {
             const guildId = interaction.guildId ?? undefined;
-            let candidates = await getInterCandidatesLastWeek({ guildId });
+            const scope = await getGuildCompetitiveScope(guildId);
+            let candidates = await getInterCandidatesLastWeek({
+                guildId,
+                scope,
+            });
 
             if (candidates.length === 0) {
                 await interaction.editReply(
@@ -169,7 +174,10 @@ export const interOfTheWeekCommand: SlashCommand = {
                     Date.now() - ONE_WEEK_IN_MS
                 );
                 if (backfilled > 0) {
-                    candidates = await getInterCandidatesLastWeek({ guildId });
+                    candidates = await getInterCandidatesLastWeek({
+                        guildId,
+                        scope,
+                    });
                 }
             }
 

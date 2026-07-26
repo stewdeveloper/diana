@@ -5,6 +5,7 @@ import {
     getLatestRanksForPuuids,
     getTotalPoints,
     getInterCandidatesLastWeek,
+    getGuildCompetitiveScope,
     type GuildSummonerRow,
     type InterCandidate,
 } from 'diana-core';
@@ -158,7 +159,8 @@ async function buildStatBoard(
     const board = STAT_BOARDS[boardKey];
     if (!board) return 'Unknown stat board.';
 
-    const candidates = await getInterCandidatesLastWeek({ guildId });
+    const scope = await getGuildCompetitiveScope(guildId);
+    const candidates = await getInterCandidatesLastWeek({ guildId, scope });
     const eligible = candidates
         .filter((c) => c.matchesPlayed >= board.minMatches)
         .filter((c) => Number.isFinite(board.metric(c)))

@@ -1,5 +1,6 @@
 import { db } from '../api/utils/db';
 import { calculateMatchScores, type PlayerScore } from './scoringAlgorithm';
+import { buildCompetitiveSqlFilter } from '../utils/queueClassification';
 
 export interface MatchScoreRow {
     sid: number;
@@ -45,13 +46,18 @@ export async function getMatchScore(
 export async function backfillMissingScores(
     sinceTimestamp: number
 ): Promise<number> {
+    // Always 'all', never the per-guild scope: this is write-time, and a match
+    // is scored once globally for every guild. The filter's only job here is to
+    // keep Arena out - without it, /mvp and /iotw call this on a thin week and
+    // silently recreate the Arena rows migration 013 deleted.
     const result = await db.query(
         `SELECT DISTINCT md."matchId", md."participants"
          FROM match_details md
          WHERE md."gameCreation" >= $1
            AND NOT EXISTS (
                SELECT 1 FROM match_scores ms WHERE ms."matchId" = md."matchId"
-           )`,
+           )
+           ${buildCompetitiveSqlFilter('md', 'all')}`,
         [sinceTimestamp]
     );
 
