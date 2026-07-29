@@ -174,7 +174,9 @@ export async function createSquadAttachment(
         res.status(201).json(attachment);
     } catch (err) {
         console.error(
-            `[${timestamp()}] [Diana:API] POST /api/squads/${squadId}/attachments error:`,
+            '[%s] [Diana:API] POST /api/squads/%s/attachments error:',
+            timestamp(),
+            squadId,
             err
         );
         res.status(500).json({ error: 'Failed to attach' });
