@@ -1,6 +1,7 @@
 import {
     getAllGuildConfigs,
     getNotificationPref,
+    getSquadIdForGuild,
 } from '../api/summoners/guildService';
 import { buildChampionIdMap } from '../api/utils/dataDragonService';
 import { createLolService } from '../api/utils/lolService/lolServiceFactory';
@@ -118,21 +119,26 @@ export function createRotationPostTick(
                 );
             }
 
-            // Keyed on the ISO week, so a redeploy that re-runs the cron in the
-            // same week cannot create a second row.
+            // Keyed on the squad and the ISO week, so a redeploy that re-runs
+            // the cron in the same week - or a second guild attached to the same
+            // squad - cannot create a second row.
             try {
-                await eventAdapter?.emit({
-                    eventId: buildPeriodicEventId(
-                        'rotation.weekly',
-                        guild.guild_id,
-                        isoWeek
-                    ),
-                    type: 'rotation.weekly',
-                    occurredAt: new Date().toISOString(),
-                    guildId: guild.guild_id,
-                    isoWeek,
-                    championNames: names,
-                });
+                const squadId = await getSquadIdForGuild(guild.guild_id);
+                if (squadId) {
+                    await eventAdapter?.emit({
+                        eventId: buildPeriodicEventId(
+                            'rotation.weekly',
+                            squadId,
+                            isoWeek
+                        ),
+                        type: 'rotation.weekly',
+                        occurredAt: new Date().toISOString(),
+                        guildId: guild.guild_id,
+                        squadId,
+                        isoWeek,
+                        championNames: names,
+                    });
+                }
             } catch (error) {
                 console.error(
                     `[Error] Failed to emit rotation event for guild ${guild.guild_id}:`,

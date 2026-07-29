@@ -3,6 +3,8 @@ export * from './core/pluginTypes';
 export * from './core/eventTypes';
 export * from './core/api/authApi';
 export * from './core/api/pluginsApi';
+export * from './core/api/squadsApi';
+export * from './core/squads/squadService';
 export * from './core/auth/authMiddleware';
 export * from './core/auth/authService';
 export * from './plugins/diana-league-bot';

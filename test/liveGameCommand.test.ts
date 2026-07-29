@@ -6,6 +6,7 @@ const buildChampionIdMapMock = jest.fn();
 const getQueueNameByIdMock = jest.fn();
 const searchSummonerGameNamesMock = jest.fn();
 const searchSummonerTagsMock = jest.fn();
+const getSquadIdForGuildMock = jest.fn().mockResolvedValue('squad-1');
 
 class MockSlashCommandStringOption {
     public config: Record<string, unknown> = {};
@@ -80,6 +81,7 @@ jest.mock('discord.js', () => ({
 
 jest.mock('diana-core', () => ({
     db: { query: dbQueryMock },
+    getSquadIdForGuild: getSquadIdForGuildMock,
     createLolService: () => ({ getActiveGame: getActiveGameMock }),
     buildChampionIdMap: buildChampionIdMapMock,
     getQueueNameById: getQueueNameByIdMock,

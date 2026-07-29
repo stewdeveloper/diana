@@ -4,6 +4,9 @@ const dbQueryMock = jest.fn();
 const getDuoRecordMock = jest.fn();
 const getInterCandidatesLastWeekMock = jest.fn();
 const getMostRecentRankMock = jest.fn();
+// Every guild in these tests resolves to one squad; the roster reads below are
+// scoped to it, not to the guild id.
+const getSquadIdForGuildMock = jest.fn().mockResolvedValue('squad-1');
 
 class MockSlashCommandStringOption {
     public config: Record<string, unknown> = {};
@@ -74,6 +77,7 @@ jest.mock('discord.js', () => ({
 
 jest.mock('diana-core', () => ({
     getGuildCompetitiveScope: jest.fn().mockResolvedValue('all'),
+    getSquadIdForGuild: getSquadIdForGuildMock,
     db: { query: dbQueryMock },
     getDuoRecord: getDuoRecordMock,
     getInterCandidatesLastWeek: getInterCandidatesLastWeekMock,

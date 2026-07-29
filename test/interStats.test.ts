@@ -330,37 +330,113 @@ describe('interStats', () => {
             expect(params).toContain('specific-puuid');
         });
 
-        it('joins guild_summoners when guildId is provided', async () => {
+        it('joins squad_summoners when squadId is provided', async () => {
             queryMock.mockResolvedValue({ rows: [] });
 
-            await getInterCandidatesSince(1000, { guildId: 'guild-1' });
+            await getInterCandidatesSince(1000, { squadId: 'squad-1' });
 
             const [query, params] = queryMock.mock.calls[0];
-            expect(query).toContain('guild_summoners');
-            expect(query).toContain('gs.guild_id = $2');
-            expect(params).toContain('guild-1');
+            expect(query).toContain('squad_summoners');
+            expect(query).toContain('ss.squad_id = $2');
+            expect(params).toContain('squad-1');
         });
 
-        it('does not join guild_summoners without a guildId', async () => {
+        it('does not join squad_summoners without a squadId', async () => {
             queryMock.mockResolvedValue({ rows: [] });
 
             await getInterCandidatesSince(1000);
 
             const [query] = queryMock.mock.calls[0];
-            expect(query).not.toContain('guild_summoners');
+            expect(query).not.toContain('squad_summoners');
         });
 
-        it('numbers parameters correctly with guildId and targetPuuid', async () => {
+        it('numbers parameters correctly with squadId and targetPuuid', async () => {
             queryMock.mockResolvedValue({ rows: [] });
 
             await getInterCandidatesSince(1000, {
-                guildId: 'guild-1',
+                squadId: 'squad-1',
                 targetPuuid: 'puuid-9',
             });
 
             const [query, params] = queryMock.mock.calls[0];
             expect(query).toContain('s."puuid" = $3');
-            expect(params).toEqual([1000, 'guild-1', 'puuid-9']);
+            expect(params).toEqual([1000, 'squad-1', 'puuid-9']);
+        });
+
+        // DN-2 acceptance: the same aggregation, asked for two different
+        // squads, must be scoped to each. The squads here stand for one backed
+        // by a Discord guild and one backed by a Meeps space - interStats does
+        // not know or care which, and that is the portability property.
+        it('scopes to each squad independently, with no bleed between them', async () => {
+            const discordSquadRows: RawMatchRow[] = [
+                {
+                    puuid: 'p-discord',
+                    gameName: 'Alice',
+                    tagLine: 'EUW',
+                    deepLolLink: null,
+                    matchId: 'EUW1_1',
+                    participants: [
+                        {
+                            puuid: 'p-discord',
+                            win: true,
+                            kills: 5,
+                            deaths: 1,
+                            assists: 3,
+                        },
+                    ],
+                    gameCreation: 2000,
+                    gameDuration: 1800,
+                    queueId: 420,
+                    gameMode: 'CLASSIC',
+                    aiScore: 70,
+                } as RawMatchRow,
+            ];
+            const meepsSquadRows: RawMatchRow[] = [
+                {
+                    puuid: 'p-meeps',
+                    gameName: 'Bob',
+                    tagLine: 'NA1',
+                    deepLolLink: null,
+                    matchId: 'NA1_1',
+                    participants: [
+                        {
+                            puuid: 'p-meeps',
+                            win: false,
+                            kills: 1,
+                            deaths: 7,
+                            assists: 0,
+                        },
+                    ],
+                    gameCreation: 2000,
+                    gameDuration: 1800,
+                    queueId: 420,
+                    gameMode: 'CLASSIC',
+                    aiScore: 20,
+                } as RawMatchRow,
+            ];
+
+            queryMock
+                .mockResolvedValueOnce({ rows: discordSquadRows })
+                .mockResolvedValueOnce({ rows: meepsSquadRows });
+
+            const fromDiscordGuild = await getInterCandidatesSince(1000, {
+                squadId: 'squad-discord',
+            });
+            const fromMeepsSpace = await getInterCandidatesSince(1000, {
+                squadId: 'squad-meeps',
+            });
+
+            expect(queryMock.mock.calls[0][1]).toContain('squad-discord');
+            expect(queryMock.mock.calls[1][1]).toContain('squad-meeps');
+
+            expect(fromDiscordGuild.map((c) => c.puuid)).toEqual(['p-discord']);
+            expect(fromMeepsSpace.map((c) => c.puuid)).toEqual(['p-meeps']);
+            expect(fromDiscordGuild.map((c) => c.puuid)).not.toContain(
+                'p-meeps'
+            );
+            expect(fromMeepsSpace.map((c) => c.puuid)).not.toContain(
+                'p-discord'
+            );
         });
 
         it('uses displayName without tagLine when tagLine is empty', async () => {
@@ -509,11 +585,11 @@ describe('getInterCandidatesSince competitive scoping', () => {
 
     it('keeps bind-parameter numbering intact alongside other options', async () => {
         await getInterCandidatesSince(123, {
-            guildId: 'g1',
+            squadId: 'sq1',
             targetPuuid: 'p1',
             scope: 'ranked',
         });
         const [, params] = queryMock.mock.calls[0];
-        expect(params).toEqual([123, 'g1', 'p1']);
+        expect(params).toEqual([123, 'sq1', 'p1']);
     });
 });

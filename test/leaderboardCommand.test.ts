@@ -3,6 +3,7 @@ export {};
 const getSummonersForGuildMock = jest.fn();
 const getLatestRanksForPuuidsMock = jest.fn();
 const getInterCandidatesLastWeekMock = jest.fn();
+const getSquadIdForGuildMock = jest.fn().mockResolvedValue('squad-1');
 
 class MockStringOption {
     public config: Record<string, unknown> = {};
@@ -117,6 +118,7 @@ function getTotalPointsImpl(
 
 jest.mock('diana-core', () => ({
     getGuildCompetitiveScope: jest.fn().mockResolvedValue('all'),
+    getSquadIdForGuild: getSquadIdForGuildMock,
     getSummonersForGuild: getSummonersForGuildMock,
     getLatestRanksForPuuids: getLatestRanksForPuuidsMock,
     getInterCandidatesLastWeek: getInterCandidatesLastWeekMock,
@@ -306,8 +308,9 @@ describe('leaderboardCommand', () => {
 
             await leaderboardCommand.execute(interaction as any);
 
+            // Scoped to the squad behind guild-1, not to the guild itself.
             expect(getInterCandidatesLastWeekMock).toHaveBeenCalledWith({
-                guildId: 'guild-1',
+                squadId: 'squad-1',
                 scope: 'all',
             });
             const description =

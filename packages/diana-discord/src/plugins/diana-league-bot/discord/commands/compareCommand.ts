@@ -11,6 +11,7 @@ import {
     getInterCandidatesLastWeek,
     getGuildCompetitiveScope,
     getMostRecentRankByParticipantIdAndQueueType,
+    getSquadIdForGuild,
     type InterCandidate,
 } from 'diana-core';
 
@@ -36,13 +37,16 @@ async function findTrackedSummoner(
     guildId: string,
     input: string
 ): Promise<TrackedSummonerRow | null> {
+    const squadId = await getSquadIdForGuild(guildId);
+    if (!squadId) return null;
+
     const { name, tag } = splitNameTag(input);
     const conditions = [
-        'gs.guild_id = $1',
+        'ss.squad_id = $1',
         's."gameName" = $2',
         "s.game_id = 'league_of_legends'",
     ];
-    const params: string[] = [guildId, name];
+    const params: string[] = [squadId, name];
     if (tag) {
         params.push(tag);
         conditions.push(`s."tagLine" = $${params.length}`);
@@ -50,7 +54,7 @@ async function findTrackedSummoner(
     const result = await db.query(
         `SELECT s."puuid", s."gameName", s."tagLine", s."deepLolLink"
          FROM summoners s
-         JOIN guild_summoners gs ON gs.puuid = s.puuid
+         JOIN squad_summoners ss ON ss.puuid = s.puuid
          WHERE ${conditions.join(' AND ')}
          ORDER BY s."tagLine" ASC
          LIMIT 1`,
@@ -63,8 +67,11 @@ async function searchGuildNameTags(
     guildId: string,
     search: string
 ): Promise<string[]> {
+    const squadId = await getSquadIdForGuild(guildId);
+    if (!squadId) return [];
+
     const trimmed = search.trim();
-    const params: Array<string | number> = [guildId];
+    const params: Array<string | number> = [squadId];
     let filter = '';
     if (trimmed) {
         params.push(`${trimmed}%`);
@@ -74,8 +81,8 @@ async function searchGuildNameTags(
     const result = await db.query(
         `SELECT s."gameName", s."tagLine"
          FROM summoners s
-         JOIN guild_summoners gs ON gs.puuid = s.puuid
-         WHERE gs.guild_id = $1 ${filter}
+         JOIN squad_summoners ss ON ss.puuid = s.puuid
+         WHERE ss.squad_id = $1 ${filter}
            AND s.game_id = 'league_of_legends'
          ORDER BY s."gameName" ASC
          LIMIT $${params.length}`,
@@ -178,15 +185,16 @@ export const compareCommand: SlashCommand = {
             }
 
             const scope = await getGuildCompetitiveScope(guildId);
+            const squadId = (await getSquadIdForGuild(guildId)) ?? undefined;
             const [weeklyA, weeklyB, rankA, rankB, duo] = await Promise.all([
                 getInterCandidatesLastWeek({
                     targetPuuid: playerA.puuid,
-                    guildId,
+                    squadId,
                     scope,
                 }),
                 getInterCandidatesLastWeek({
                     targetPuuid: playerB.puuid,
-                    guildId,
+                    squadId,
                     scope,
                 }),
                 getMostRecentRankByParticipantIdAndQueueType(

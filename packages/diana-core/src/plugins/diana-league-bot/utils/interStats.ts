@@ -68,8 +68,14 @@ export interface InterCandidate {
 export interface InterStatsOptions {
     /** Restrict aggregation to a single summoner */
     targetPuuid?: string;
-    /** Restrict aggregation to summoners tracked in this guild */
-    guildId?: string;
+    /**
+     * Restrict aggregation to summoners on this squad's roster.
+     *
+     * Squad, not guild, since DN-2: the same roster is reachable from a Discord
+     * guild and a Meeps space, and the stats must agree in both. Discord callers
+     * resolve theirs with `getSquadIdForGuild(interaction.guildId)`.
+     */
+    squadId?: string;
     /**
      * Which queues count. Resolve it at the call site via
      * `getGuildCompetitiveScope(interaction.guildId)` - not here, because
@@ -106,14 +112,14 @@ function buildDisplayName(gameName: string, tagLine: string) {
 
 export async function getInterCandidatesSince(
     sinceTimestamp: number,
-    { targetPuuid, guildId, scope }: InterStatsOptions = {}
+    { targetPuuid, squadId, scope }: InterStatsOptions = {}
 ): Promise<InterCandidate[]> {
     const params: Array<string | number> = [sinceTimestamp];
 
-    let guildJoin = '';
-    if (guildId) {
-        params.push(guildId);
-        guildJoin = `JOIN guild_summoners gs ON gs.puuid = s.puuid AND gs.guild_id = $${params.length}`;
+    let squadJoin = '';
+    if (squadId) {
+        params.push(squadId);
+        squadJoin = `JOIN squad_summoners ss ON ss.puuid = s.puuid AND ss.squad_id = $${params.length}`;
     }
 
     let query = `
@@ -131,7 +137,7 @@ export async function getInterCandidatesSince(
             ms."score" AS "aiScore"
         FROM summoners s
         JOIN match_details md ON md."entryPlayerPuuid" = s."puuid"
-        ${guildJoin}
+        ${squadJoin}
         LEFT JOIN match_scores ms ON ms."matchId" = md."matchId" AND ms."puuid" = s."puuid"
         WHERE md."gameCreation" IS NOT NULL
           AND md."gameCreation" >= $1

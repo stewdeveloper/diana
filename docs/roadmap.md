@@ -136,13 +136,11 @@ Guilded did not die from missing features. It died because a friend group cannot
 
 Four cross-cutting changes that everything else hangs off. All four get harder every week features are added on top of the current shape.
 
-### 5.1 Typed event bus (DN-1) - the keystone
+### 5.1 Typed event bus (DN-1) - the keystone ✅
 
 Today Diana serialises a `MessagePayload` and POSTs it to `/api/diana-notify`. Meeps therefore has no structured knowledge of anything Diana knows. Every joint feature in §7 is blocked by exactly this.
 
-> **Correction to `new-design.md` §1.1.** That document describes a "Diana webhook receiver at `/api/diana-notify`" in Meeps. **It does not exist** — there is no such route anywhere in the Meeps repository; only `buildNotifyController.js`, which handles GitHub build pings. The integration is half-built: Diana sends, nothing receives, and `meepsAdapter.ts` early-returns whenever `MEEPS_WEBHOOK_URL` is unset.
->
-> This makes DN-1 **easier**, not harder: there is no legacy receiver to stay compatible with and no existing Meeps rendering to preserve. The only backward-compatibility burden is Discord's output, which is now covered by snapshot tests in `test/discordPayloadRegression.test.ts`.
+> **Correction to `new-design.md` §1.1, now resolved.** That document describes a "Diana webhook receiver at `/api/diana-notify`" in Meeps. No such route ever existed — only `buildNotifyController.js`, which handles GitHub build pings. DN-1 built the receiver from scratch at **`/api/diana-events`** (`dianaEventsController.js`, migration `030_diana_events.sql`), which was easier than retrofitting: no legacy receiver to stay compatible with, and no existing Meeps rendering to preserve. The only backward-compatibility burden was Discord's output, covered by snapshot tests in `test/discordPayloadRegression.test.ts`.
 
 `MessagePayload` (`packages/diana-core/src/core/pluginTypes.ts:9-20`) is presentation-shaped - title, description, colourHex, fields, footer. There is **no discriminator, no scope id, no idempotency key** anywhere in it.
 
@@ -174,7 +172,7 @@ Meeps stores these **as rows**, renders them natively, and - critically - **post
 
 This also **resolves** the old roadmap's trap #3 (no images or components on the notification path): Meeps receives data and renders natively, so it can show graphs and cards without Diana ever serialising a binary.
 
-### 5.2 `squad_id` as the portable scope (DN-2)
+### 5.2 `squad_id` as the portable scope (DN-2) ✅
 
 Diana scopes to Discord `guildId`; Meeps has no scope at all. Introduce **`squad_id`** as the shared primary scope, with a Discord guild _or_ a Meeps space as an **attachment** to it. `guild_config` and `guild_summoners` become attachments rather than the scope itself.
 
@@ -208,14 +206,14 @@ Scheduled in R3 rather than R1 because it is not a blocker on charging money - b
 
 ### Diana track
 
-| ID          | Item                                                                                             | Effort       | Acceptance                                                                                                                                                                |
-| ----------- | ------------------------------------------------------------------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 🔨 **DN-1** | Typed event bus + `EventAdapter`, with at-least-once delivery and deterministic idempotency keys | M            | `EventAdapter` ships alongside `MessageAdapter`; Discord output byte-identical (regression-tested); Meeps stores events as rows; redelivery of any event is provably safe |
-| ⬜ **DN-2** | `squad_id` scope, portable across Discord guild and Meeps space                                  | S–M          | `/iotw`, `/leaderboard` and digests correct across two guilds _and_ two spaces, with a test                                                                               |
-| ⬜ **DN-3** | Riot account linking (RSO if granted, icon handshake otherwise) + per-player privacy opt-out     | M            | Verified link; opt-out honoured by every leaderboard, digest and recap                                                                                                    |
-| ⬜ **DN-8** | Riot compliance package                                                                          | S, long lead | Product registered; status Approved or Acknowledged; single production key; transformativeness statement written; free tier defined                                       |
-| ⬜ **DN-4** | Betting removed from the roadmap                                                                 | XS           | No wagering design or code path exists anywhere. **Note: no betting code was ever written** - this is a documentation deletion, already done by this file's existence     |
-| ~~DN-10~~   | ~~Migration tooling hardening~~ — **dropped, see below**                                         | —            | Not needed                                                                                                                                                                |
+| ID          | Item                                                                                             | Effort       | Acceptance                                                                                                                                                                                                                                               |
+| ----------- | ------------------------------------------------------------------------------------------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ✅ **DN-1** | Typed event bus + `EventAdapter`, with at-least-once delivery and deterministic idempotency keys | M            | **Shipped.** `EventAdapter` ships alongside `MessageAdapter`; Discord output byte-identical (13 snapshots in `discordPayloadRegression.test.ts`); Meeps stores events as rows in `diana_events`; `event_id` is the primary key, so redelivery is a no-op |
+| ✅ **DN-2** | `squad_id` scope, portable across Discord guild and Meeps space                                  | S–M          | **Shipped.** Migration 014 (`squads`, `squad_attachments`, `squad_summoners`); every roster read scoped to the squad; events carry `squadId`; two-squad isolation tested in `interStats.test.ts` and `weeklyDigestService.test.ts`                       |
+| ⬜ **DN-3** | Riot account linking (RSO if granted, icon handshake otherwise) + per-player privacy opt-out     | M            | Verified link; opt-out honoured by every leaderboard, digest and recap                                                                                                                                                                                   |
+| ⬜ **DN-8** | Riot compliance package                                                                          | S, long lead | Product registered; status Approved or Acknowledged; single production key; transformativeness statement written; free tier defined                                                                                                                      |
+| ⬜ **DN-4** | Betting removed from the roadmap                                                                 | XS           | No wagering design or code path exists anywhere. **Note: no betting code was ever written** - this is a documentation deletion, already done by this file's existence                                                                                    |
+| ~~DN-10~~   | ~~Migration tooling hardening~~ — **dropped, see below**                                         | —            | Not needed                                                                                                                                                                                                                                               |
 
 > **DN-10 was written on a false premise and has been dropped.** `db/migrate.sh`
 > already maintains a `schema_migration_diana` versions table keyed on filename,
@@ -231,8 +229,8 @@ Scheduled in R3 rather than R1 because it is not a blocker on charging money - b
 
 | ID          | Item                                                                                                                       | Effort | Acceptance                                                                                                                                                                                   |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ⬜ **MP-1** | **Spaces** - real multi-tenancy: `spaces`, `channels`, `memberships`, invite links; delete the hardcoded channel constants | **L**  | Two independent squads coexist on one deployment with zero data bleed; channels created/renamed/deleted at runtime; invite flow works end to end. **Highest-priority item in the programme** |
-| ⬜ **MP-2** | Roles & moderation basics - owner/admin/member, kick, ban, channel permissions                                             | M      | Owner can kick/ban; non-admins cannot alter space config; enforced server-side, not just in the UI                                                                                           |
+| ✅ **MP-1** | **Spaces** - real multi-tenancy: `spaces`, `channels`, `memberships`, invite links; delete the hardcoded channel constants | **L**  | Two independent squads coexist on one deployment with zero data bleed; channels created/renamed/deleted at runtime; invite flow works end to end. **Highest-priority item in the programme** |
+| ✅ **MP-2** | Roles & moderation basics - owner/admin/member, kick, ban, channel permissions                                             | M      | Owner can kick/ban; non-admins cannot alter space config; enforced server-side, not just in the UI                                                                                           |
 | ⬜ **MP-4** | Self-serve onboarding - hosted signup, no `.env`, no VAPID generation, no migration step                                   | M      | A non-technical buyer goes from landing page to talking in voice with a friend in under 10 minutes                                                                                           |
 | ⬜ **MP-8** | Bridge productisation - guided setup flow replacing `DISCORD_CHANNEL_MAP` env parsing                                      | M      | Channel mapping, identity linking and backfill all self-serve through the UI                                                                                                                 |
 | ⬜ **MP-7** | Consent & data surface - per-user opt-in, visible, revocable, exportable; per-space export and delete                      | S–M    | Every user can see, revoke and export what is collected about them; activity logging and voice analytics both default **off**                                                                |
@@ -462,8 +460,8 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 
 | ID        | Item                                 | Here                                                |
 | --------- | ------------------------------------ | --------------------------------------------------- |
-| MP-1      | Spaces multi-tenancy                 | §6 R1                                               |
-| MP-2      | Roles & moderation                   | §6 R1                                               |
+| MP-1      | Spaces multi-tenancy                 | ✅ **Shipped** - §6 R1                              |
+| MP-2      | Roles & moderation                   | ✅ **Shipped** - §6 R1                              |
 | MP-3      | SFU voice                            | §7 R2                                               |
 | MP-4      | Self-serve onboarding                | §6 R1                                               |
 | MP-5      | macOS build                          | §6 R1                                               |
@@ -471,8 +469,8 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 | MP-7      | Consent & data surface               | §6 R1                                               |
 | MP-8      | Bridge productisation                | §6 R1                                               |
 | MP-9      | Typed backend + coverage             | §8.6 R3                                             |
-| DN-1      | Typed event bus                      | §5.1, §6 R1                                         |
-| DN-2      | `squad_id` scope                     | §5.2, §6 R1                                         |
+| DN-1      | Typed event bus                      | ✅ **Shipped** - §5.1, §6 R1                        |
+| DN-2      | `squad_id` scope                     | ✅ **Shipped** - §5.2, §6 R1                        |
 | DN-3      | Riot account linking + opt-out       | §5.3, §6 R1                                         |
 | DN-4      | Kill betting                         | §6 R1 - **doc deletion only, no code existed**      |
 | DN-5      | Presence ingestion                   | §7 R2                                               |
@@ -514,9 +512,9 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 
 ### 13.3 Migrations by release
 
-- **R1** `[Diana]`: `squads` + squad attachments (guild ⇄ space); `identities` + `riot_account_links`; per-player privacy flags.
-- **R1** `[Meeps]`: `029_diana_events.sql` — the event log, `event_id` as primary key for idempotency. ✅ written.
-- **R1** `[Meeps]`: `spaces`, `channels`, `memberships`, invite links; roles/permissions; consent + export records; event rows (match / rank / session).
+- **R1** `[Diana]`: `squads` + squad attachments (guild ⇄ space) — ✅ `014_squads.sql`; `identities` + `riot_account_links` and per-player privacy flags — DN-3, outstanding.
+- **R1** `[Meeps]`: `030_diana_events.sql` — the event log, `event_id` as primary key for idempotency. ✅ shipped (it landed as 030, not 029).
+- **R1** `[Meeps]`: `spaces`, `channels`, `memberships`, invite links — ✅ `032_spaces.sql`, `033_messages_channel_id_backfill.sql`; roles/permissions — ✅ `035_space_bans.sql`; consent + export records — MP-7, outstanding.
 - **R2**: `sessions`; voice presence intervals.
 - **R3**: live-game dedup state (**separate from `summoners.currentMatchId`**); Calls windows + accuracy stats; plugin config tables; `diana-builds` tables migrated from Meeps.
 

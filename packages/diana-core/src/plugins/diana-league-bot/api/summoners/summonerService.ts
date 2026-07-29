@@ -1,5 +1,6 @@
 import { db } from '../utils/db.js';
 import { Summoner } from '../../types.js';
+import { getSquadIdForGuild } from './guildService';
 
 export const getSummonerByAccountName = async (
     accountName: string,
@@ -36,13 +37,15 @@ export async function searchSummonerGameNames(
     try {
         const trimmedSearch = search.trim();
 
-        if (guildId) {
+        const squadId = guildId ? await getSquadIdForGuild(guildId) : null;
+
+        if (squadId) {
             const query = trimmedSearch
                 ? `
                     SELECT DISTINCT s."gameName"
                     FROM summoners s
-                    JOIN guild_summoners gs ON gs.puuid = s.puuid
-                    WHERE gs.guild_id = $1 AND s."gameName" ILIKE $2
+                    JOIN squad_summoners ss ON ss.puuid = s.puuid
+                    WHERE ss.squad_id = $1 AND s."gameName" ILIKE $2
                       AND s.game_id = 'league_of_legends'
                     ORDER BY s."gameName" ASC
                     LIMIT $3
@@ -50,15 +53,15 @@ export async function searchSummonerGameNames(
                 : `
                     SELECT DISTINCT s."gameName"
                     FROM summoners s
-                    JOIN guild_summoners gs ON gs.puuid = s.puuid
-                    WHERE gs.guild_id = $1
+                    JOIN squad_summoners ss ON ss.puuid = s.puuid
+                    WHERE ss.squad_id = $1
                       AND s.game_id = 'league_of_legends'
                     ORDER BY s."gameName" ASC
                     LIMIT $2
                 `;
             const params = trimmedSearch
-                ? [guildId, `${trimmedSearch}%`, limit]
-                : [guildId, limit];
+                ? [squadId, `${trimmedSearch}%`, limit]
+                : [squadId, limit];
             const result = await db.query(query, params);
             return result.rows.map((row: { gameName: string }) => row.gameName);
         }
@@ -105,13 +108,15 @@ export async function searchSummonerTags(
         const trimmedSearch = search.trim();
         const trimmedName = gameName ? gameName.trim() : null;
 
-        if (guildId) {
+        const squadId = guildId ? await getSquadIdForGuild(guildId) : null;
+
+        if (squadId) {
             const conditions: string[] = [
-                'gs.guild_id = $1',
+                'ss.squad_id = $1',
                 's."tagLine" IS NOT NULL',
                 "s.game_id = 'league_of_legends'",
             ];
-            const params: Array<string | number> = [guildId];
+            const params: Array<string | number> = [squadId];
 
             if (trimmedName) {
                 params.push(trimmedName);
@@ -126,7 +131,7 @@ export async function searchSummonerTags(
             const query = `
                 SELECT DISTINCT s."tagLine", s."matchRegionPrefix"
                 FROM summoners s
-                JOIN guild_summoners gs ON gs.puuid = s.puuid
+                JOIN squad_summoners ss ON ss.puuid = s.puuid
                 WHERE ${conditions.join(' AND ')}
                 ORDER BY s."tagLine" ASC
                 LIMIT $${params.length}

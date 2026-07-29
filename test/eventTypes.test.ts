@@ -16,11 +16,13 @@ describe('buildMatchScopedEventId', () => {
     it('is deterministic for the same inputs', () => {
         const a = buildMatchScopedEventId(
             'match.completed',
+            'squad-1',
             'EUW1_123',
             'puuid-1'
         );
         const b = buildMatchScopedEventId(
             'match.completed',
+            'squad-1',
             'EUW1_123',
             'puuid-1'
         );
@@ -29,56 +31,112 @@ describe('buildMatchScopedEventId', () => {
 
     it('differs by match', () => {
         expect(
-            buildMatchScopedEventId('match.completed', 'EUW1_123', 'puuid-1')
+            buildMatchScopedEventId(
+                'match.completed',
+                'squad-1',
+                'EUW1_123',
+                'puuid-1'
+            )
         ).not.toBe(
-            buildMatchScopedEventId('match.completed', 'EUW1_124', 'puuid-1')
+            buildMatchScopedEventId(
+                'match.completed',
+                'squad-1',
+                'EUW1_124',
+                'puuid-1'
+            )
         );
     });
 
     it('differs by player, so both players in a duo get their own event', () => {
         expect(
-            buildMatchScopedEventId('match.completed', 'EUW1_123', 'puuid-1')
+            buildMatchScopedEventId(
+                'match.completed',
+                'squad-1',
+                'EUW1_123',
+                'puuid-1'
+            )
         ).not.toBe(
-            buildMatchScopedEventId('match.completed', 'EUW1_123', 'puuid-2')
+            buildMatchScopedEventId(
+                'match.completed',
+                'squad-1',
+                'EUW1_123',
+                'puuid-2'
+            )
+        );
+    });
+
+    it('differs by squad, so a player on two squads produces a row for each', () => {
+        expect(
+            buildMatchScopedEventId(
+                'match.completed',
+                'squad-1',
+                'EUW1_123',
+                'puuid-1'
+            )
+        ).not.toBe(
+            buildMatchScopedEventId(
+                'match.completed',
+                'squad-2',
+                'EUW1_123',
+                'puuid-1'
+            )
         );
     });
 
     it('differs by type, so a match and a rank change from the same game do not collide', () => {
         expect(
-            buildMatchScopedEventId('match.completed', 'EUW1_123', 'puuid-1')
+            buildMatchScopedEventId(
+                'match.completed',
+                'squad-1',
+                'EUW1_123',
+                'puuid-1'
+            )
         ).not.toBe(
-            buildMatchScopedEventId('rank.changed', 'EUW1_123', 'puuid-1')
+            buildMatchScopedEventId(
+                'rank.changed',
+                'squad-1',
+                'EUW1_123',
+                'puuid-1'
+            )
         );
     });
 
     it('produces a readable, greppable key', () => {
-        expect(buildMatchScopedEventId('streak', 'EUW1_123', 'puuid-1')).toBe(
-            'streak:EUW1_123:puuid-1'
-        );
+        expect(
+            buildMatchScopedEventId('streak', 'squad-1', 'EUW1_123', 'puuid-1')
+        ).toBe('streak:squad-1:EUW1_123:puuid-1');
     });
 });
 
 describe('buildPeriodicEventId', () => {
     it('is stable across the same week, so a redeploy cannot double-post', () => {
         expect(
-            buildPeriodicEventId('digest.weekly', 'guild-1', '2026-W30')
-        ).toBe(buildPeriodicEventId('digest.weekly', 'guild-1', '2026-W30'));
+            buildPeriodicEventId('digest.weekly', 'squad-1', '2026-W30')
+        ).toBe(buildPeriodicEventId('digest.weekly', 'squad-1', '2026-W30'));
     });
 
     it('differs by week', () => {
         expect(
-            buildPeriodicEventId('digest.weekly', 'guild-1', '2026-W30')
+            buildPeriodicEventId('digest.weekly', 'squad-1', '2026-W30')
         ).not.toBe(
-            buildPeriodicEventId('digest.weekly', 'guild-1', '2026-W31')
+            buildPeriodicEventId('digest.weekly', 'squad-1', '2026-W31')
         );
     });
 
-    it('differs by guild, so each guild gets its own digest row', () => {
+    it('differs by squad, so each squad gets its own digest row', () => {
         expect(
-            buildPeriodicEventId('digest.weekly', 'guild-1', '2026-W30')
+            buildPeriodicEventId('digest.weekly', 'squad-1', '2026-W30')
         ).not.toBe(
-            buildPeriodicEventId('digest.weekly', 'guild-2', '2026-W30')
+            buildPeriodicEventId('digest.weekly', 'squad-2', '2026-W30')
         );
+    });
+
+    it('is the same for two guilds attached to one squad: two posts, one fact', () => {
+        // Both guilds resolve to squad-1, so both emissions carry this key and
+        // the receiver's ON CONFLICT (event_id) keeps a single row.
+        expect(
+            buildPeriodicEventId('digest.weekly', 'squad-1', '2026-W30')
+        ).toBe(buildPeriodicEventId('digest.weekly', 'squad-1', '2026-W30'));
     });
 });
 

@@ -2,6 +2,7 @@ const getAllGuildConfigsMock = jest.fn();
 const getInterCandidatesSinceMock = jest.fn();
 const fetchRankHistoryMock = jest.fn();
 const dbQueryMock = jest.fn();
+const getSquadIdForGuildMock = jest.fn().mockResolvedValue('squad-1');
 
 jest.mock(
     '../packages/diana-core/src/plugins/diana-league-bot/api/utils/db',
@@ -19,6 +20,7 @@ jest.mock(
         return {
             ...actual,
             getAllGuildConfigs: getAllGuildConfigsMock,
+            getSquadIdForGuild: getSquadIdForGuildMock,
         };
     }
 );
@@ -91,13 +93,59 @@ describe('buildWeeklyDigestPayload', () => {
         expect(payload).toBeNull();
     });
 
-    it('passes the guildId and competitive scope into the stats query', async () => {
+    it("scopes the stats query to the guild's squad, with the guild's own queue scope", async () => {
         getInterCandidatesSinceMock.mockResolvedValue([makeCandidate()]);
         await buildWeeklyDigestPayload('g1');
         expect(getInterCandidatesSinceMock).toHaveBeenCalledWith(
             expect.any(Number),
-            { guildId: 'g1', scope: 'all' }
+            { squadId: 'squad-1', scope: 'all' }
         );
+    });
+
+    // DN-2 acceptance: two guilds, two squads. Each digest must be built from
+    // its own squad's roster. The second guild here stands for one whose squad
+    // is also reachable from a Meeps space - buildWeeklyDigestPayload cannot
+    // tell the difference, which is the portability property.
+    it('scopes each guild to its own squad, with no bleed between them', async () => {
+        getSquadIdForGuildMock
+            .mockResolvedValueOnce('squad-a')
+            .mockResolvedValueOnce('squad-b');
+        getInterCandidatesSinceMock
+            .mockResolvedValueOnce([makeCandidate({ displayName: 'Alice' })])
+            .mockResolvedValueOnce([makeCandidate({ displayName: 'Bob' })]);
+
+        const a = await buildWeeklyDigestPayload('guild-a');
+        const b = await buildWeeklyDigestPayload('guild-b');
+
+        expect(getInterCandidatesSinceMock).toHaveBeenNthCalledWith(
+            1,
+            expect.any(Number),
+            expect.objectContaining({ squadId: 'squad-a' })
+        );
+        expect(getInterCandidatesSinceMock).toHaveBeenNthCalledWith(
+            2,
+            expect.any(Number),
+            expect.objectContaining({ squadId: 'squad-b' })
+        );
+
+        const aText = JSON.stringify(a);
+        const bText = JSON.stringify(b);
+        expect(aText).toContain('Alice');
+        expect(aText).not.toContain('Bob');
+        expect(bText).toContain('Bob');
+        expect(bText).not.toContain('Alice');
+    });
+
+    it('returns null when the guild has no squad, rather than digesting everything', async () => {
+        // A guild with no attachment has no roster; without this guard the
+        // unscoped query would report every tracked player on the deployment.
+        getSquadIdForGuildMock.mockResolvedValueOnce(null);
+        getInterCandidatesSinceMock.mockResolvedValue([makeCandidate()]);
+
+        const payload = await buildWeeklyDigestPayload('g-unattached');
+
+        expect(payload).toBeNull();
+        expect(getInterCandidatesSinceMock).not.toHaveBeenCalled();
     });
 
     it('crowns MVP and Inter and names the grinder', async () => {
@@ -309,9 +357,13 @@ describe('createWeeklyDigestTick', () => {
         expect(events.emit).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: 'digest.weekly',
+                // guildId records where it was posted; squadId is the scope
+                // the event belongs to, and the key is built from the squad so
+                // two guilds on one squad cannot produce two rows.
                 guildId: 'g1',
+                squadId: 'squad-1',
                 eventId: expect.stringMatching(
-                    /^digest\.weekly:g1:\d{4}-W\d{2}$/
+                    /^digest\.weekly:squad-1:\d{4}-W\d{2}$/
                 ),
             })
         );

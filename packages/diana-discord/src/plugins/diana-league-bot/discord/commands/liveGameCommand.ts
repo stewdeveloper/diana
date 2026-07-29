@@ -12,6 +12,7 @@ import {
     getQueueNameById,
     searchSummonerGameNames,
     searchSummonerTags,
+    getSquadIdForGuild,
     type LiveGameInfo,
 } from 'diana-core';
 
@@ -31,12 +32,15 @@ async function findTrackedSummoners(
     gameName: string,
     tag: string | null
 ): Promise<TrackedSummonerRow[]> {
+    const squadId = await getSquadIdForGuild(guildId);
+    if (!squadId) return [];
+
     const conditions = [
-        'gs.guild_id = $1',
+        'ss.squad_id = $1',
         's."gameName" = $2',
         "s.game_id = 'league_of_legends'",
     ];
-    const params: string[] = [guildId, gameName];
+    const params: string[] = [squadId, gameName];
     if (tag) {
         params.push(tag);
         conditions.push(`s."tagLine" = $${params.length}`);
@@ -45,7 +49,7 @@ async function findTrackedSummoners(
         `SELECT s."puuid", s."gameName", s."tagLine", s."region",
                 s."matchRegionPrefix", s."deepLolLink"
          FROM summoners s
-         JOIN guild_summoners gs ON gs.puuid = s.puuid
+         JOIN squad_summoners ss ON ss.puuid = s.puuid
          WHERE ${conditions.join(' AND ')}
          ORDER BY s."tagLine" ASC`,
         params

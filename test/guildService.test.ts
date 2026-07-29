@@ -217,8 +217,11 @@ describe('guildService', () => {
     // ─── addSummonerToGuild ───────────────────────────────────────────────────
 
     describe('addSummonerToGuild', () => {
-        it('inserts with addedBy when provided', async () => {
-            queryMock.mockResolvedValue({ rows: [] });
+        it('resolves the guild to its squad, then inserts with addedBy', async () => {
+            // 1. resolve the discord_guild attachment, 2. insert the roster row
+            queryMock
+                .mockResolvedValueOnce({ rows: [{ squad_id: 'sq1' }] })
+                .mockResolvedValueOnce({ rows: [] });
 
             await guildService.addSummonerToGuild(
                 'g1',
@@ -226,19 +229,52 @@ describe('guildService', () => {
                 'user-123'
             );
 
-            expect(queryMock).toHaveBeenCalledWith(
-                expect.stringContaining('guild_summoners'),
-                ['g1', 'puuid-abc', 'user-123']
+            expect(queryMock).toHaveBeenNthCalledWith(
+                1,
+                expect.stringContaining('FROM squad_attachments'),
+                ['discord_guild', 'g1']
+            );
+            expect(queryMock).toHaveBeenNthCalledWith(
+                2,
+                expect.stringContaining('INSERT INTO squad_summoners'),
+                ['sq1', 'puuid-abc', 'user-123']
+            );
+        });
+
+        it('creates the squad on first use, so a new guild needs no setup step', async () => {
+            queryMock
+                // no attachment yet
+                .mockResolvedValueOnce({ rows: [] })
+                // INSERT INTO squads
+                .mockResolvedValueOnce({ rows: [{ squad_id: 'sq-new' }] })
+                // INSERT INTO squad_attachments
+                .mockResolvedValueOnce({ rows: [{ squad_id: 'sq-new' }] })
+                // INSERT INTO squad_summoners
+                .mockResolvedValueOnce({ rows: [] });
+
+            await guildService.addSummonerToGuild('g-fresh', 'puuid-abc');
+
+            expect(queryMock).toHaveBeenNthCalledWith(
+                3,
+                expect.stringContaining('INSERT INTO squad_attachments'),
+                ['discord_guild', 'g-fresh', 'sq-new']
+            );
+            expect(queryMock).toHaveBeenNthCalledWith(
+                4,
+                expect.stringContaining('INSERT INTO squad_summoners'),
+                ['sq-new', 'puuid-abc', null]
             );
         });
 
         it('inserts with null addedBy when not provided', async () => {
-            queryMock.mockResolvedValue({ rows: [] });
+            queryMock
+                .mockResolvedValueOnce({ rows: [{ squad_id: 'sq1' }] })
+                .mockResolvedValueOnce({ rows: [] });
 
             await guildService.addSummonerToGuild('g1', 'puuid-abc');
 
             expect(queryMock).toHaveBeenCalledWith(expect.anything(), [
-                'g1',
+                'sq1',
                 'puuid-abc',
                 null,
             ]);
@@ -249,10 +285,12 @@ describe('guildService', () => {
 
     describe('removeSummonerFromGuild', () => {
         it('returns true when a row was deleted', async () => {
-            queryMock.mockResolvedValue({
-                rows: [{ puuid: 'p1' }],
-                rowCount: 1,
-            });
+            queryMock
+                .mockResolvedValueOnce({ rows: [{ squad_id: 'sq1' }] })
+                .mockResolvedValueOnce({
+                    rows: [{ puuid: 'p1' }],
+                    rowCount: 1,
+                });
 
             const result = await guildService.removeSummonerFromGuild(
                 'g1',
@@ -261,9 +299,21 @@ describe('guildService', () => {
 
             expect(result).toBe(true);
             expect(queryMock).toHaveBeenCalledWith(
-                expect.stringContaining('DELETE FROM guild_summoners'),
-                ['g1', 'p1']
+                expect.stringContaining('DELETE FROM squad_summoners'),
+                ['sq1', 'p1']
             );
+        });
+
+        it('returns false without querying the roster when the guild has no squad', async () => {
+            queryMock.mockResolvedValueOnce({ rows: [] });
+
+            const result = await guildService.removeSummonerFromGuild(
+                'g-unknown',
+                'p1'
+            );
+
+            expect(result).toBe(false);
+            expect(queryMock).toHaveBeenCalledTimes(1);
         });
 
         it('returns false when no row was deleted', async () => {
@@ -282,7 +332,29 @@ describe('guildService', () => {
 
     describe('getSummonersForGuild', () => {
         it('returns joined rows for the given guild', async () => {
-            const rows = [
+            // The roster is stored against the squad; callers still think in
+            // guilds, so guild_id is substituted back on the way out.
+            const squadRows = [
+                {
+                    squad_id: 'sq1',
+                    puuid: 'p1',
+                    gameName: 'Alice',
+                    tagLine: 'EUW',
+                },
+                {
+                    squad_id: 'sq1',
+                    puuid: 'p2',
+                    gameName: 'Bob',
+                    tagLine: 'NA1',
+                },
+            ];
+            queryMock
+                .mockResolvedValueOnce({ rows: [{ squad_id: 'sq1' }] })
+                .mockResolvedValueOnce({ rows: squadRows });
+
+            const result = await guildService.getSummonersForGuild('g1');
+
+            expect(result).toEqual([
                 {
                     guild_id: 'g1',
                     puuid: 'p1',
@@ -295,15 +367,11 @@ describe('guildService', () => {
                     gameName: 'Bob',
                     tagLine: 'NA1',
                 },
-            ];
-            queryMock.mockResolvedValue({ rows });
-
-            const result = await guildService.getSummonersForGuild('g1');
-
-            expect(result).toEqual(rows);
+            ]);
+            expect(result.every((row) => !('squad_id' in row))).toBe(true);
             expect(queryMock).toHaveBeenCalledWith(
                 expect.stringContaining('JOIN summoners'),
-                ['g1']
+                ['sq1']
             );
         });
 
@@ -321,10 +389,12 @@ describe('guildService', () => {
 
     describe('isSummonerInGuild', () => {
         it('returns true when summoner is tracked in the guild', async () => {
-            queryMock.mockResolvedValue({
-                rows: [{ '?column?': 1 }],
-                rowCount: 1,
-            });
+            queryMock
+                .mockResolvedValueOnce({ rows: [{ squad_id: 'sq1' }] })
+                .mockResolvedValueOnce({
+                    rows: [{ '?column?': 1 }],
+                    rowCount: 1,
+                });
 
             const result = await guildService.isSummonerInGuild('g1', 'p1');
 
@@ -332,7 +402,9 @@ describe('guildService', () => {
         });
 
         it('returns false when summoner is not tracked in the guild', async () => {
-            queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+            queryMock
+                .mockResolvedValueOnce({ rows: [{ squad_id: 'sq1' }] })
+                .mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
             const result = await guildService.isSummonerInGuild(
                 'g1',
@@ -356,8 +428,10 @@ describe('guildService', () => {
             const result = await guildService.getGuildsTrackingSummoner('p1');
 
             expect(result).toEqual(rows);
+            // Reaches guild_config through the squad, so a guild attached to a
+            // squad it did not create still receives that squad's match posts.
             expect(queryMock).toHaveBeenCalledWith(
-                expect.stringContaining('WHERE gs.puuid = $1'),
+                expect.stringContaining('WHERE ss.puuid = $1'),
                 ['p1']
             );
         });
@@ -386,7 +460,7 @@ describe('guildService', () => {
     // ─── getAllTrackedPuuids ───────────────────────────────────────────────────
 
     describe('getAllTrackedPuuids', () => {
-        it('returns distinct puuids from guild_summoners', async () => {
+        it('returns distinct puuids from every squad roster', async () => {
             queryMock.mockResolvedValue({
                 rows: [{ puuid: 'p1' }, { puuid: 'p2' }, { puuid: 'p3' }],
             });
@@ -394,8 +468,10 @@ describe('guildService', () => {
             const result = await guildService.getAllTrackedPuuids();
 
             expect(result).toEqual(['p1', 'p2', 'p3']);
+            // Squad-wide, so a summoner tracked only through a Meeps space is
+            // still polled.
             expect(queryMock).toHaveBeenCalledWith(
-                expect.stringContaining('gs.puuid'),
+                expect.stringContaining('ss.puuid'),
                 []
             );
         });

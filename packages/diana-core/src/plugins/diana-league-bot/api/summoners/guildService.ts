@@ -3,6 +3,39 @@ import {
     type CompetitiveScope,
     parseCompetitiveScope,
 } from '../../utils/queueClassification';
+import {
+    addSummonerToSquad,
+    getAllSquadTrackedPuuids,
+    getOrCreateSquadForAttachment,
+    getSquadIdForAttachment,
+    getSummonersForSquad,
+    isSummonerInSquad,
+    removeSummonerFromSquad,
+} from '../../../../core/squads/squadService';
+
+/**
+ * Since DN-2 the roster lives on the squad, not the guild. A Discord guild is an
+ * *attachment* to a squad, and `guild_config` below is that attachment's
+ * delivery configuration - channel, notification prefs, competitive scope.
+ *
+ * The roster functions keep their `*Guild` names and signatures because a
+ * Discord command legitimately holds a `guildId`; they resolve it to a squad and
+ * delegate. Resolution at the edge is the whole point of an attachment.
+ */
+const DISCORD_GUILD = 'discord_guild' as const;
+
+/** The squad behind a Discord guild, or null if the guild has never been used. */
+export const getSquadIdForGuild = (guildId: string): Promise<string | null> =>
+    getSquadIdForAttachment(DISCORD_GUILD, guildId);
+
+/**
+ * The squad behind a Discord guild, creating it on first use.
+ *
+ * Only write paths should call this. Reads use `getSquadIdForGuild` so that
+ * querying an unknown guild returns nothing rather than conjuring an empty squad.
+ */
+export const getOrCreateSquadIdForGuild = (guildId: string): Promise<string> =>
+    getOrCreateSquadForAttachment(DISCORD_GUILD, guildId);
 
 export interface GuildConfig {
     guild_id: string;
@@ -173,51 +206,40 @@ export const addSummonerToGuild = async (
     puuid: string,
     addedBy?: string
 ): Promise<void> => {
-    await db.query(
-        `INSERT INTO guild_summoners (guild_id, puuid, added_by)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (guild_id, puuid) DO NOTHING`,
-        [guildId, puuid, addedBy ?? null]
-    );
+    const squadId = await getOrCreateSquadIdForGuild(guildId);
+    await addSummonerToSquad(squadId, puuid, addedBy);
 };
 
 export const removeSummonerFromGuild = async (
     guildId: string,
     puuid: string
 ): Promise<boolean> => {
-    const result = await db.query(
-        `DELETE FROM guild_summoners WHERE guild_id = $1 AND puuid = $2 RETURNING puuid`,
-        [guildId, puuid]
-    );
-    return result.rowCount !== null && result.rowCount > 0;
+    const squadId = await getSquadIdForGuild(guildId);
+    if (!squadId) return false;
+    return removeSummonerFromSquad(squadId, puuid);
 };
 
 export const getSummonersForGuild = async (
     guildId: string
 ): Promise<GuildSummonerRow[]> => {
-    const result = await db.query(
-        `SELECT gs.guild_id, gs.puuid, gs.added_by, gs.added_at,
-                s."gameName", s."tagLine", s."region", s."tier", s."rank", s."lp",
-                s."deepLolLink", s."matchRegionPrefix", s."regionGroup"
-         FROM guild_summoners gs
-         JOIN summoners s ON s.puuid = gs.puuid
-         WHERE gs.guild_id = $1
-           AND s.game_id = 'league_of_legends'
-         ORDER BY s."gameName" ASC`,
-        [guildId]
-    );
-    return result.rows;
+    const squadId = await getSquadIdForGuild(guildId);
+    if (!squadId) return [];
+    const rows = await getSummonersForSquad(squadId);
+    // Callers still think in guilds, so hand back the guild they asked about
+    // rather than leaking the squad id into presentation code.
+    return rows.map(({ squad_id: _squadId, ...rest }) => ({
+        ...rest,
+        guild_id: guildId,
+    }));
 };
 
 export const isSummonerInGuild = async (
     guildId: string,
     puuid: string
 ): Promise<boolean> => {
-    const result = await db.query(
-        `SELECT 1 FROM guild_summoners WHERE guild_id = $1 AND puuid = $2`,
-        [guildId, puuid]
-    );
-    return result.rowCount !== null && result.rowCount > 0;
+    const squadId = await getSquadIdForGuild(guildId);
+    if (!squadId) return false;
+    return isSummonerInSquad(squadId, puuid);
 };
 
 export interface GuildNotificationTarget {
@@ -234,9 +256,11 @@ export const getGuildsTrackingSummoner = async (
     const result = await db.query(
         `SELECT gc.guild_id, gc.channel_id, gc.live_posting, gc.notification_prefs,
                 gc.competitive_scope
-         FROM guild_summoners gs
-         JOIN guild_config gc ON gc.guild_id = gs.guild_id
-         WHERE gs.puuid = $1
+         FROM squad_summoners ss
+         JOIN squad_attachments sa
+           ON sa.squad_id = ss.squad_id AND sa.kind = 'discord_guild'
+         JOIN guild_config gc ON gc.guild_id = sa.external_id
+         WHERE ss.puuid = $1
            AND gc.channel_id IS NOT NULL`,
         [puuid]
     );
@@ -252,13 +276,11 @@ export const getAllGuildConfigs = async (): Promise<GuildConfig[]> => {
     return result.rows;
 };
 
-export const getAllTrackedPuuids = async (): Promise<string[]> => {
-    const result = await db.query(
-        `SELECT DISTINCT gs.puuid
-         FROM guild_summoners gs
-         JOIN summoners s ON s.puuid = gs.puuid
-         WHERE s.game_id = 'league_of_legends'`,
-        []
-    );
-    return result.rows.map((row: { puuid: string }) => row.puuid);
-};
+/**
+ * Every League summoner tracked by any squad.
+ *
+ * Squad-wide, not guild-wide: a summoner tracked only through a Meeps space is
+ * still polled, which is the point of the portable scope.
+ */
+export const getAllTrackedPuuids = (): Promise<string[]> =>
+    getAllSquadTrackedPuuids();

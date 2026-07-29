@@ -9,6 +9,7 @@ import {
     registerPlugin,
     loadPlugin,
     pluginsApiRouter,
+    squadsApiRouter,
     authApiRouter,
     requireAuth,
     setPluginMessageAdapter,
@@ -119,6 +120,7 @@ async function main() {
 
     // Protected routes (require authentication)
     app.use('/api/plugins', requireAuth, pluginsApiRouter);
+    app.use('/api/squads', requireAuth, squadsApiRouter);
 
     setExpressApp(app);
     setPluginMessageAdapter(leagueBotPlugin.id, createDianaPluginAdapter());
