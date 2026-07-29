@@ -49,8 +49,24 @@ export interface MeepsEventBase {
     type: MeepsEventType;
     /** ISO 8601. When it happened, not when we received it. */
     occurredAt: string;
-    /** The portable scope (DN-2). */
+    /**
+     * The portable scope (DN-2), resolved.
+     *
+     * Meeps does not have to know this value. It may send `meepsSpaceId`
+     * instead and let Diana resolve it through `squad_attachments` - see
+     * `resolvePresenceScope`. By the time an event reaches validation the scope
+     * is always a real squad id, so the idempotency key never depends on which
+     * form the sender used.
+     */
     squadId: string;
+    /**
+     * The Meeps space this presence happened in, as Meeps knows it.
+     *
+     * Carried through to the stored payload for provenance: it is the only
+     * record of *which* attachment resolved to this squad, and a space can be
+     * re-attached to a different squad later.
+     */
+    meepsSpaceId?: string;
     /** Meeps' own user id. The person, as Meeps knows them. */
     meepsUserId: string;
     /**
@@ -167,6 +183,12 @@ export function validatePresenceEvent(
     }
     if (e.puuid !== undefined && typeof e.puuid !== 'string') {
         return { ok: false, error: 'puuid must be a string when present' };
+    }
+    if (e.meepsSpaceId !== undefined && typeof e.meepsSpaceId !== 'string') {
+        return {
+            ok: false,
+            error: 'meepsSpaceId must be a string when present',
+        };
     }
     if (e.queueId !== undefined && typeof e.queueId !== 'number') {
         return { ok: false, error: 'queueId must be a number when present' };
