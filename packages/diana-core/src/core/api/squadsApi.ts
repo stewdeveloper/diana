@@ -224,7 +224,9 @@ export async function deleteSquadAttachment(
         res.json({ detached: removed });
     } catch (err) {
         console.error(
-            `[${timestamp()}] [Diana:API] DELETE /api/squads/${squadId}/attachments error:`,
+            '[%s] [Diana:API] DELETE /api/squads/%s/attachments error:',
+            timestamp(),
+            squadId,
             err
         );
         res.status(500).json({ error: 'Failed to detach' });
