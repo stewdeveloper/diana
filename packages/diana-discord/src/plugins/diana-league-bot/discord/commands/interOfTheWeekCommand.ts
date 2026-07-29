@@ -3,6 +3,7 @@ import type { SlashCommand } from '../../../../discord/commandTypes';
 import {
     getInterCandidatesLastWeek,
     getGuildCompetitiveScope,
+    getSquadIdForGuild,
     backfillMissingScores,
     ONE_WEEK_IN_MS,
     type InterCandidate,
@@ -152,8 +153,12 @@ export const interOfTheWeekCommand: SlashCommand = {
         try {
             const guildId = interaction.guildId ?? undefined;
             const scope = await getGuildCompetitiveScope(guildId);
+            // The roster is the squad's, the queue scope is this guild's.
+            const squadId = guildId
+                ? ((await getSquadIdForGuild(guildId)) ?? undefined)
+                : undefined;
             let candidates = await getInterCandidatesLastWeek({
-                guildId,
+                squadId,
                 scope,
             });
 
@@ -175,7 +180,7 @@ export const interOfTheWeekCommand: SlashCommand = {
                 );
                 if (backfilled > 0) {
                     candidates = await getInterCandidatesLastWeek({
-                        guildId,
+                        squadId,
                         scope,
                     });
                 }

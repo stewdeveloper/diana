@@ -5,6 +5,7 @@ import {
     getAllGuildConfigs,
     getNotificationPref,
     getGuildCompetitiveScope,
+    getSquadIdForGuild,
 } from '../api/summoners/guildService';
 import {
     buildCompetitiveSqlFilter,
@@ -35,18 +36,18 @@ function displayName(gameName: string, tagLine: string): string {
 }
 
 async function fetchWeeklyScoredGames(
-    guildId: string,
+    squadId: string,
     sinceTimestamp: number,
     scope: CompetitiveScope
 ): Promise<ScoredGameRow[]> {
     // EXISTS rather than a JOIN: match_scores holds every participant, but
     // match_details only holds rows for *entry* players. Joining would silently
-    // drop a summoner added to the guild after a match; EXISTS only ever
+    // drop a summoner added to the squad after a match; EXISTS only ever
     // removes Arena/non-ranked matches, so it is purely additive.
     const result = await db.query(
         `SELECT ms."matchId", ms."puuid", ms."score", s."gameName", s."tagLine"
          FROM match_scores ms
-         JOIN guild_summoners gs ON gs.puuid = ms."puuid" AND gs.guild_id = $1
+         JOIN squad_summoners ss ON ss.puuid = ms."puuid" AND ss.squad_id = $1
          JOIN summoners s ON s.puuid = ms."puuid"
          WHERE ms."createdAt" >= to_timestamp($2 / 1000.0)
            AND EXISTS (
@@ -55,7 +56,7 @@ async function fetchWeeklyScoredGames(
                  ${buildCompetitiveSqlFilter('md', scope)}
            )
          ORDER BY ms."score" DESC`,
-        [guildId, sinceTimestamp]
+        [squadId, sinceTimestamp]
     );
     return result.rows;
 }
@@ -110,8 +111,13 @@ export async function buildWeeklyDigestPayload(
 ): Promise<MessagePayload | null> {
     const sinceTimestamp = Date.now() - ONE_WEEK_IN_MS;
     const scope = await getGuildCompetitiveScope(guildId);
+    // The roster is the squad's; the competitive scope above is this Discord
+    // attachment's. Two guilds on one squad share players and may still count
+    // different queues.
+    const squadId = await getSquadIdForGuild(guildId);
+    if (!squadId) return null;
     const candidates = await getInterCandidatesSince(sinceTimestamp, {
-        guildId,
+        squadId,
         scope,
     });
     if (candidates.length === 0) return null;
@@ -171,7 +177,7 @@ export async function buildWeeklyDigestPayload(
 
     try {
         const scoredGames = await fetchWeeklyScoredGames(
-            guildId,
+            squadId,
             sinceTimestamp,
             scope
         );
@@ -244,20 +250,25 @@ export function createWeeklyDigestTick(
                     `[Info] [${new Date().toISOString()}] Sent weekly digest to guild ${guild.guild_id}.`
                 );
 
-                // Keyed on the ISO week the digest covers, so a retry or a
-                // redeploy inside the same week cannot create a second row.
+                // Keyed on the squad and the ISO week the digest covers, so a
+                // retry, a redeploy inside the same week, or a second guild
+                // attached to the same squad cannot create a second row.
                 const isoWeek = toIsoWeek(new Date());
-                await eventAdapter?.emit({
-                    eventId: buildPeriodicEventId(
-                        'digest.weekly',
-                        guild.guild_id,
-                        isoWeek
-                    ),
-                    type: 'digest.weekly',
-                    occurredAt: new Date().toISOString(),
-                    guildId: guild.guild_id,
-                    isoWeek,
-                });
+                const squadId = await getSquadIdForGuild(guild.guild_id);
+                if (squadId) {
+                    await eventAdapter?.emit({
+                        eventId: buildPeriodicEventId(
+                            'digest.weekly',
+                            squadId,
+                            isoWeek
+                        ),
+                        type: 'digest.weekly',
+                        occurredAt: new Date().toISOString(),
+                        guildId: guild.guild_id,
+                        squadId,
+                        isoWeek,
+                    });
+                }
             } catch (error) {
                 console.error(
                     `[Error] Failed to send weekly digest to guild ${guild.guild_id}:`,

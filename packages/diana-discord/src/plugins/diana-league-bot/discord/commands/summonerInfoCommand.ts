@@ -310,8 +310,8 @@ export const summonerInfoCommand: SlashCommand = {
             const { puuid, gameName, tagLine, tier, rank, lp, deepLolLink } =
                 summonerRecord as any;
 
-            // No guildId here on purpose: passing one would activate the
-            // guild_summoners join and restrict /summoner to tracked players.
+            // No squadId here on purpose: passing one would activate the
+            // squad_summoners join and restrict /summoner to tracked players.
             const scope = await getGuildCompetitiveScope(interaction.guildId);
             const [matches, iotwCandidates] = (await Promise.all([
                 fetchRecentMatches(puuid),
