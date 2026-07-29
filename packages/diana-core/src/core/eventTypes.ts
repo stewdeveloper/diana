@@ -36,10 +36,15 @@ export interface DianaEventBase {
     /**
      * Discord guild the event was posted for.
      *
-     * `squadId` is the portable scope that replaces this in DN-2; until then it
-     * is always undefined. Consumers should prefer `squadId` when present.
+     * Present only on events that are inherently about a Discord destination
+     * (the weekly digest and rotation posts). Prefer `squadId` for anything that
+     * is a fact about the group rather than about where it was announced.
      */
     guildId?: string;
+    /**
+     * The portable scope (DN-2). A squad is reachable from a Discord guild and a
+     * Meeps space at once, so this is the id joint features aggregate on.
+     */
     squadId?: string;
 }
 
@@ -150,32 +155,40 @@ export interface EventAdapter {
 // ---------------------------------------------------------------------------
 
 /**
- * Per-match, per-player events. The (matchId, puuid) pair is the natural key:
- * a given player finishes a given match exactly once, however many times the
- * poller sees it.
+ * Per-squad, per-match, per-player events. The (squadId, matchId, puuid) triple
+ * is the natural key: a given player finishes a given match exactly once for a
+ * given squad, however many times the poller sees it.
+ *
+ * The squad is part of the key because one player can be on several squads, and
+ * each needs its own row - a session recap for squad A must not be assembled
+ * from squad B's copy of the same match.
  */
 export function buildMatchScopedEventId(
     type: Extract<
         DianaEventType,
         'match.completed' | 'rank.changed' | 'streak' | 'milestone'
     >,
+    squadId: string,
     matchId: string,
     puuid: string
 ): string {
-    return `${type}:${matchId}:${puuid}`;
+    return `${type}:${squadId}:${matchId}:${puuid}`;
 }
 
 /**
- * Recurring per-guild posts. Keyed on the period they cover rather than the
+ * Recurring per-squad posts. Keyed on the period they cover rather than the
  * time they were sent, so a retry — or a redeploy that re-runs the cron within
  * the same week — cannot produce a second row.
+ *
+ * Keyed on squad rather than guild, so two Discord guilds attached to one squad
+ * produce two posts and one event row: two destinations, one fact.
  */
 export function buildPeriodicEventId(
     type: Extract<DianaEventType, 'digest.weekly' | 'rotation.weekly'>,
-    guildId: string,
+    squadId: string,
     isoWeek: string
 ): string {
-    return `${type}:${guildId}:${isoWeek}`;
+    return `${type}:${squadId}:${isoWeek}`;
 }
 
 /**

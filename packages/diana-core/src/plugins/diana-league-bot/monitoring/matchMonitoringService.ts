@@ -59,6 +59,7 @@ import { Constants } from 'twisted';
 import type { MessageAdapter } from '../../../core/pluginTypes';
 import type { EventAdapter } from '../../../core/eventTypes';
 import { buildMatchScopedEventId } from '../../../core/eventTypes';
+import { getSquadsTrackingPuuid } from '../../../core/squads/squadService';
 
 const lolService = createLolService();
 const shouldForceDevelopmentTimers = Boolean(
@@ -662,13 +663,12 @@ const handleNewMatchCompleted = async (
         );
     }
 
-    // Structured events (DN-1).
+    // Structured events (DN-1), scoped to the squad (DN-2).
     //
-    // Emitted ONCE per match, deliberately outside the per-guild loop above:
-    // an event is a fact about the match, not about a Discord channel. Emitting
-    // inside the loop would send one duplicate per tracking guild (deduped by
-    // the receiver, but N pointless HTTP calls). It also means events are still
-    // captured for matches no guild is configured to post.
+    // Emitted once per *squad* tracking this player, not once per Discord guild:
+    // an event is a fact about the group, not about a channel. A squad reachable
+    // from both a Discord guild and a Meeps space still gets exactly one row per
+    // event, and a match is still captured when no guild is configured to post.
     //
     // Never allowed to break match posting - hence its own try/catch, and an
     // adapter that does not throw.
@@ -680,99 +680,112 @@ const handleNewMatchCompleted = async (
                     : Date.now()
             ).toISOString();
 
-            await eventAdapter.emit({
-                eventId: buildMatchScopedEventId(
-                    'match.completed',
-                    newMatchId,
-                    puuid
-                ),
-                type: 'match.completed',
-                occurredAt,
-                matchId: newMatchId,
-                puuid,
-                summonerName,
-                queueId: info.queueId ?? undefined,
-                queueName,
-                gameMode: info.gameMode ?? undefined,
-                isArena: arena,
-                // Arena is excluded here regardless of any guild's setting.
-                countsForCompetition: countsForCompetition(
-                    { gameMode: info.gameMode, queueId: info.queueId },
-                    'all'
-                ),
-                subteamPlacement: arenaPlacement,
-                championName: champion,
-                role: getRoleNameTranslation(role),
-                result,
-                win: result === 'Win',
-                kills: participant?.kills ?? 0,
-                deaths: participant?.deaths ?? 0,
-                assists: participant?.assists ?? 0,
-                damage,
-                gameDurationSeconds: gameDuration,
-                aiScore: summonerAiScore,
-                placement: summonerPlacement,
-                totalPlayers: participants.length || undefined,
-                lpChange: lpChangeMsg,
-                rankAfter: newRankMsg,
-            });
-
-            if (checkForRankUp !== 'no_change') {
+            for (const squadId of await getSquadsTrackingPuuid(puuid)) {
                 await eventAdapter.emit({
                     eventId: buildMatchScopedEventId(
-                        'rank.changed',
+                        'match.completed',
+                        squadId,
                         newMatchId,
                         puuid
                     ),
-                    type: 'rank.changed',
+                    type: 'match.completed',
                     occurredAt,
+                    squadId,
                     matchId: newMatchId,
                     puuid,
                     summonerName,
-                    direction:
-                        checkForRankUp === 'promoted' ? 'promoted' : 'demoted',
-                    rankAfter: newRankMsg,
+                    queueId: info.queueId ?? undefined,
+                    queueName,
+                    gameMode: info.gameMode ?? undefined,
+                    isArena: arena,
+                    // Arena is excluded here regardless of any guild's setting.
+                    countsForCompetition: countsForCompetition(
+                        { gameMode: info.gameMode, queueId: info.queueId },
+                        'all'
+                    ),
+                    subteamPlacement: arenaPlacement,
+                    championName: champion,
+                    role: getRoleNameTranslation(role),
+                    result,
+                    win: result === 'Win',
+                    kills: participant?.kills ?? 0,
+                    deaths: participant?.deaths ?? 0,
+                    assists: participant?.assists ?? 0,
+                    damage,
+                    gameDurationSeconds: gameDuration,
+                    aiScore: summonerAiScore,
+                    placement: summonerPlacement,
+                    totalPlayers: participants.length || undefined,
                     lpChange: lpChangeMsg,
-                });
-            }
-
-            // Events are emitted once per match, not per guild, so they carry
-            // the 'all' scope (Arena excluded, every other queue counted) and
-            // declare it - consumers re-filter from the match.completed fields.
-            const streakForEvent = streakByScope.all;
-            if (streakForEvent) {
-                await eventAdapter.emit({
-                    eventId: buildMatchScopedEventId(
-                        'streak',
-                        newMatchId,
-                        puuid
-                    ),
-                    type: 'streak',
-                    occurredAt,
-                    matchId: newMatchId,
-                    puuid,
-                    summonerName,
-                    kind: streakForEvent.kind,
-                    length: streakForEvent.length,
-                    competitiveScope: 'all',
-                });
-            }
-
-            if (milestoneToAnnounce) {
-                await eventAdapter.emit({
-                    eventId: buildMatchScopedEventId(
-                        'milestone',
-                        newMatchId,
-                        puuid
-                    ),
-                    type: 'milestone',
-                    occurredAt,
-                    matchId: newMatchId,
-                    puuid,
-                    summonerName,
-                    milestone: milestoneToAnnounce,
                     rankAfter: newRankMsg,
                 });
+
+                if (checkForRankUp !== 'no_change') {
+                    await eventAdapter.emit({
+                        eventId: buildMatchScopedEventId(
+                            'rank.changed',
+                            squadId,
+                            newMatchId,
+                            puuid
+                        ),
+                        type: 'rank.changed',
+                        occurredAt,
+                        squadId,
+                        matchId: newMatchId,
+                        puuid,
+                        summonerName,
+                        direction:
+                            checkForRankUp === 'promoted'
+                                ? 'promoted'
+                                : 'demoted',
+                        rankAfter: newRankMsg,
+                        lpChange: lpChangeMsg,
+                    });
+                }
+
+                // Streaks are computed once per match, not per guild, so they
+                // carry the 'all' scope (Arena excluded, every other queue
+                // counted) and declare it - consumers re-filter from the
+                // match.completed fields.
+                const streakForEvent = streakByScope.all;
+                if (streakForEvent) {
+                    await eventAdapter.emit({
+                        eventId: buildMatchScopedEventId(
+                            'streak',
+                            squadId,
+                            newMatchId,
+                            puuid
+                        ),
+                        type: 'streak',
+                        occurredAt,
+                        squadId,
+                        matchId: newMatchId,
+                        puuid,
+                        summonerName,
+                        kind: streakForEvent.kind,
+                        length: streakForEvent.length,
+                        competitiveScope: 'all',
+                    });
+                }
+
+                if (milestoneToAnnounce) {
+                    await eventAdapter.emit({
+                        eventId: buildMatchScopedEventId(
+                            'milestone',
+                            squadId,
+                            newMatchId,
+                            puuid
+                        ),
+                        type: 'milestone',
+                        occurredAt,
+                        squadId,
+                        matchId: newMatchId,
+                        puuid,
+                        summonerName,
+                        milestone: milestoneToAnnounce,
+                        rankAfter: newRankMsg,
+                    });
+                }
             }
         }
     } catch (error) {
