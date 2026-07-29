@@ -90,8 +90,35 @@ Note: the `/iotw` cross-guild leak described in `new-design.md` was already fixe
 in #113 — `interStats.ts` carries the `guild_summoners` join. DN-2 is needed for
 portability, not to close a live leak.
 
-## Then: Section 3 — DN-3 Riot account linking + privacy opt-out
+## Section 3 — DN-5 presence ingestion from Meeps
 
-RSO if granted, profile-icon handshake otherwise. Per-player opt-out honoured by
-every leaderboard, digest and recap. Gated on the Riot application outcome — see
-the App Notes in the submitted application regarding `/iotw` and the AI score.
+Done. `MeepsEvent` union (`voice.joined`, `voice.left`, `client.in_champ_select`,
+`client.in_game`) with deterministic ids keyed on
+`(type, squadId, meepsUserId, occurredAt)`; migration 015 adds `presence_events`
+and `presence_consent`; `/api/presence` behind a shared secret, mirroring the
+outbound direction.
+
+Consent is enforced at ingestion, not at read time — a non-consented event is
+dropped and leaves no row. Absence of a consent row means no. Erasure deletes and
+revokes together, so revoking cannot leave collection running and silently refill
+what was just deleted.
+
+`puuid` is nullable and carries no foreign key: DN-3 is not built, so a Meeps
+user's Riot account is not yet authoritative, and a FK would drop presence for
+exactly the people whose voice presence still matters to a session.
+
+## Deferred: DN-3 Riot account linking + privacy opt-out
+
+**Blocked — no Riot access.** RSO if granted, profile-icon handshake otherwise.
+Per-player opt-out honoured by every leaderboard, digest and recap. Not scheduled;
+#142 stays open.
+
+DN-8 (portal compliance) was closed by decision — `/iotw` and the AI score stay
+as they are, and registration only binds at the point money changes hands.
+
+## Next: DN-6 session service
+
+Sessionise `presence_events` plus matches into a `sessions` table. The boundary
+problem is the interesting part: a session is a contiguous stretch of voice
+presence with games in it, not a calendar day, and it crosses midnight — which is
+where the interesting data is. Unblocked now that presence lands.

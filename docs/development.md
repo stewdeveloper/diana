@@ -62,6 +62,10 @@ npm run dev
 | `MOCK_APEX_SERVICE`      | No               | `true` to force mock Apex data                                                                     |
 | `SUPPORT_URL`            | No               | URL shown at the bottom of match-end embeds                                                        |
 | `DISABLE_DISCORD_POSTS`  | No               | Dry-run - suppresses all Discord messages                                                          |
+| `MEEPS_WEBHOOK_URL`      | No               | Base URL of the Meeps server. Unset disables outbound events entirely                              |
+| `MEEPS_WEBHOOK_SECRET`   | No               | Sent as `x-diana-secret` on outbound events; must match Meeps' `DIANA_WEBHOOK_SECRET`              |
+| `DISABLE_MEEPS_POSTS`    | No               | Dry-run - suppresses all outbound Meeps traffic                                                    |
+| `MEEPS_INBOUND_SECRET`   | No               | Expected as `x-meeps-secret` on inbound presence events. **Unset disables `/api/presence` (503)**  |
 
 ---
 

@@ -252,7 +252,7 @@ Scheduled in R3 rather than R1 because it is not a blocker on charging money - b
 
 | ID          | Item                                                                           | Owner     | Effort | Rate |
 | ----------- | ------------------------------------------------------------------------------ | --------- | ------ | ---- |
-| ⬜ **DN-5** | Presence ingestion - accept `voice.*` and `client.*` events from Meeps         | `[Diana]` | S      | zero |
+| ✅ **DN-5** | Presence ingestion - accept `voice.*` and `client.*` events from Meeps         | `[Diana]` | S      | zero |
 | ⬜ **DN-6** | Session service - sessionise matches + voice presence into a `sessions` table  | `[Diana]` | M      | zero |
 | ⬜ **MP-6** | Native event rendering - match cards, LP graphs, recap cards as first-class UI | `[Meeps]` | M      | -    |
 | ⬜ **MP-3** | SFU voice (LiveKit or mediasoup) replacing mesh                                | `[Meeps]` | M–L    | -    |
@@ -473,7 +473,7 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 | DN-2      | `squad_id` scope                     | ✅ **Shipped** - §5.2, §6 R1                        |
 | DN-3      | Riot account linking + opt-out       | §5.3, §6 R1                                         |
 | DN-4      | Kill betting                         | §6 R1 - **doc deletion only, no code existed**      |
-| DN-5      | Presence ingestion                   | §7 R2                                               |
+| DN-5      | Presence ingestion                   | ✅ **Shipped** - §7 R2                              |
 | DN-6      | Session service                      | §7 R2                                               |
 | DN-7      | Rate limiter, cache, Postgres config | §8.6 R3                                             |
 | DN-8      | Riot compliance package              | §6 R1, **week 1**                                   |
@@ -515,7 +515,7 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 - **R1** `[Diana]`: `squads` + squad attachments (guild ⇄ space) — ✅ `014_squads.sql`; `identities` + `riot_account_links` and per-player privacy flags — DN-3, outstanding.
 - **R1** `[Meeps]`: `030_diana_events.sql` — the event log, `event_id` as primary key for idempotency. ✅ shipped (it landed as 030, not 029).
 - **R1** `[Meeps]`: `spaces`, `channels`, `memberships`, invite links — ✅ `032_spaces.sql`, `033_messages_channel_id_backfill.sql`; roles/permissions — ✅ `035_space_bans.sql`; consent + export records — MP-7, outstanding.
-- **R2**: `sessions`; voice presence intervals.
+- **R2**: voice presence — ✅ `015_presence.sql` (`presence_events`, `presence_consent`); `sessions` and presence intervals — DN-6, outstanding.
 - **R3**: live-game dedup state (**separate from `summoners.currentMatchId`**); Calls windows + accuracy stats; plugin config tables; `diana-builds` tables migrated from Meeps.
 
 ### 13.4 Conventions for implementers
