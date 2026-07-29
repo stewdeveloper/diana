@@ -83,7 +83,9 @@ export async function getSquadById(req: Request, res: Response): Promise<void> {
         res.json({ ...squad, attachments: await getSquadAttachments(squadId) });
     } catch (err) {
         console.error(
-            `[${timestamp()}] [Diana:API] GET /api/squads/${squadId} error:`,
+            '[%s] [Diana:API] GET /api/squads/%s error:',
+            timestamp(),
+            squadId,
             err
         );
         res.status(500).json({ error: 'Failed to load squad' });
