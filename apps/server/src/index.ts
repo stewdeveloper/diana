@@ -10,6 +10,7 @@ import {
     loadPlugin,
     pluginsApiRouter,
     squadsApiRouter,
+    presenceApiRouter,
     authApiRouter,
     requireAuth,
     setPluginMessageAdapter,
@@ -121,6 +122,9 @@ async function main() {
     // Protected routes (require authentication)
     app.use('/api/plugins', requireAuth, pluginsApiRouter);
     app.use('/api/squads', requireAuth, squadsApiRouter);
+    // Presence ingestion (DN-5) is machine-to-machine from the Meeps server, so
+    // it carries its own shared-secret gate instead of the dashboard's JWT.
+    app.use('/api/presence', presenceApiRouter);
 
     setExpressApp(app);
     setPluginMessageAdapter(leagueBotPlugin.id, createDianaPluginAdapter());
