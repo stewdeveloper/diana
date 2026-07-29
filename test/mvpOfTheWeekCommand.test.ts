@@ -2,6 +2,8 @@ export {};
 
 const getInterCandidatesLastWeekMock = jest.fn();
 const backfillMissingScoresMock = jest.fn().mockResolvedValue(0);
+// The guild resolves to one squad; the stats query is scoped to that squad.
+const getSquadIdForGuildMock = jest.fn().mockResolvedValue('squad-42');
 
 class MockSlashCommandBuilder {
     public name?: string;
@@ -64,6 +66,7 @@ jest.mock('discord.js', () => ({
 
 jest.mock('diana-core', () => ({
     getGuildCompetitiveScope: jest.fn().mockResolvedValue('all'),
+    getSquadIdForGuild: getSquadIdForGuildMock,
     getInterCandidatesLastWeek: getInterCandidatesLastWeekMock,
     backfillMissingScores: backfillMissingScoresMock,
     ONE_WEEK_IN_MS: 7 * 24 * 60 * 60 * 1000,
@@ -115,14 +118,17 @@ describe('mvpOfTheWeekCommand', () => {
     });
 
     describe('execute', () => {
-        it('passes the guildId and competitive scope through to the stats query', async () => {
+        it("passes the guild's squad and competitive scope through to the stats query", async () => {
             getInterCandidatesLastWeekMock.mockResolvedValue([makeCandidate()]);
             const interaction = makeInteraction('guild-42');
 
             await mvpOfTheWeekCommand.execute(interaction as any);
 
+            // The roster comes from the squad; the queue scope stays the
+            // guild's own setting.
+            expect(getSquadIdForGuildMock).toHaveBeenCalledWith('guild-42');
             expect(getInterCandidatesLastWeekMock).toHaveBeenCalledWith({
-                guildId: 'guild-42',
+                squadId: 'squad-42',
                 scope: 'all',
             });
         });

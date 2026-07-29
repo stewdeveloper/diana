@@ -1,6 +1,7 @@
 const getAllGuildConfigsMock = jest.fn();
 const getChampionRotationMock = jest.fn();
 const buildChampionIdMapMock = jest.fn();
+const getSquadIdForGuildMock = jest.fn().mockResolvedValue('squad-1');
 
 jest.mock(
     '../packages/diana-core/src/plugins/diana-league-bot/api/summoners/guildService',
@@ -11,6 +12,7 @@ jest.mock(
         return {
             ...actual,
             getAllGuildConfigs: getAllGuildConfigsMock,
+            getSquadIdForGuild: getSquadIdForGuildMock,
         };
     }
 );
@@ -173,10 +175,14 @@ describe('createRotationPostTick', () => {
         expect(events.emit).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: 'rotation.weekly',
+                // guildId records where it was posted; squadId is the scope
+                // the event belongs to, and the key is built from the squad so
+                // two guilds on one squad cannot produce two rows.
                 guildId: 'g1',
+                squadId: 'squad-1',
                 championNames: ['Annie'],
                 eventId: expect.stringMatching(
-                    /^rotation\.weekly:g1:\d{4}-W\d{2}$/
+                    /^rotation\.weekly:squad-1:\d{4}-W\d{2}$/
                 ),
             })
         );
