@@ -14,6 +14,7 @@ import {
     getPresenceConsentForUser,
     getPresenceForSquad,
     hasPresenceConsent,
+    resolvePresenceScope,
     setPresenceConsent,
     storePresenceEvent,
 } from '../packages/diana-core/src/core/presence/presenceService';
@@ -295,5 +296,99 @@ describe('deletePresenceForUser', () => {
     it('reports zero rather than null when nothing matched', async () => {
         queryMock.mockResolvedValue({ rowCount: null });
         expect(await deletePresenceForUser('u1')).toBe(0);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Scope resolution
+// ---------------------------------------------------------------------------
+
+describe('resolvePresenceScope', () => {
+    it('passes an explicit squadId straight through without a lookup', async () => {
+        const scope = await resolvePresenceScope({ squadId: 'sq1' });
+
+        expect(scope).toEqual({
+            squadId: 'sq1',
+            ok: true,
+            meepsSpaceId: undefined,
+        });
+        // The point: Meeps that already knows the squad costs zero queries.
+        expect(queryMock).not.toHaveBeenCalled();
+    });
+
+    it('resolves a Meeps space through its squad attachment', async () => {
+        queryMock.mockResolvedValueOnce({
+            rows: [{ squad_id: 'sq-resolved' }],
+        });
+
+        const scope = await resolvePresenceScope({
+            meepsSpaceId: 'space-uuid',
+        });
+
+        expect(scope).toEqual({
+            ok: true,
+            squadId: 'sq-resolved',
+            meepsSpaceId: 'space-uuid',
+        });
+        const [sql, params] = queryMock.mock.calls[0];
+        expect(sql).toContain('FROM squad_attachments');
+        expect(params).toEqual(['meeps_space', 'space-uuid']);
+    });
+
+    it('prefers an explicit squadId over a space, but keeps the space for provenance', async () => {
+        const scope = await resolvePresenceScope({
+            squadId: 'sq1',
+            meepsSpaceId: 'space-uuid',
+        });
+
+        expect(scope).toEqual({
+            ok: true,
+            squadId: 'sq1',
+            meepsSpaceId: 'space-uuid',
+        });
+        expect(queryMock).not.toHaveBeenCalled();
+    });
+
+    // The whole reason this does not call getOrCreateSquadForAttachment: an
+    // auto-created squad would have no roster and no matches, so every session
+    // query would return nothing while looking perfectly healthy.
+    it('refuses an unattached space instead of creating a squad for it', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+
+        const scope = await resolvePresenceScope({ meepsSpaceId: 'orphan' });
+
+        expect(scope.ok).toBe(false);
+        if (scope.ok) throw new Error('expected resolution to fail');
+        expect(scope.reason).toBe('unattached_space');
+        // Actionable: names the space and the call that fixes it.
+        expect(scope.error).toContain('orphan');
+        expect(scope.error).toContain('attachments');
+        // No INSERT anywhere - the only query was the lookup.
+        expect(queryMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects an event carrying neither scope', async () => {
+        const scope = await resolvePresenceScope({ meepsUserId: 'u1' });
+
+        expect(scope.ok).toBe(false);
+        if (scope.ok) throw new Error('expected resolution to fail');
+        expect(scope.reason).toBe('missing_scope');
+        expect(queryMock).not.toHaveBeenCalled();
+    });
+
+    it('treats blank and whitespace scopes as absent', async () => {
+        const scope = await resolvePresenceScope({
+            squadId: '   ',
+            meepsSpaceId: '',
+        });
+
+        expect(scope.ok).toBe(false);
+        if (scope.ok) throw new Error('expected resolution to fail');
+        expect(scope.reason).toBe('missing_scope');
+    });
+
+    it('does not throw on a null body', async () => {
+        const scope = await resolvePresenceScope(null);
+        expect(scope.ok).toBe(false);
     });
 });

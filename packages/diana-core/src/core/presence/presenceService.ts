@@ -9,6 +9,7 @@
 // See the note in squadService: `db` is infrastructure misfiled under the
 // League plugin. Imported where it lives rather than moved.
 import { db } from '../../plugins/diana-league-bot/api/utils/db';
+import { getSquadIdForAttachment } from '../squads/squadService';
 import type { MeepsEvent, MeepsEventType } from '../presenceTypes';
 
 export interface PresenceConsent {
@@ -101,6 +102,78 @@ const squadExists = async (squadId: string): Promise<boolean> => {
         squadId,
     ]);
     return result.rowCount !== null && result.rowCount > 0;
+};
+
+// ---------------------------------------------------------------------------
+// Scope resolution
+// ---------------------------------------------------------------------------
+
+export type PresenceScopeResolution =
+    | { ok: true; squadId: string; meepsSpaceId?: string }
+    | {
+          ok: false;
+          reason: 'missing_scope' | 'unattached_space';
+          error: string;
+      };
+
+/**
+ * Work out which squad an inbound event belongs to.
+ *
+ * Meeps should not have to store Diana's squad ids. It knows its own space, so
+ * it sends `meepsSpaceId` and this resolves it through `squad_attachments` -
+ * the table DN-2 built for exactly this, keyed `(kind, external_id)` so the
+ * mapping is single-valued. A sender that already knows the squad may still
+ * send `squadId` directly; both forms resolve to the same value, which is why
+ * the idempotency key is built afterwards rather than by the sender.
+ *
+ * **Deliberately does not create the squad.** `getOrCreateSquadForAttachment`
+ * exists and is what a Discord guild uses to self-attach on first use, but
+ * applying it here would be wrong: a friend group with both a Discord guild and
+ * a Meeps space would get *two* squads - matches under the guild's, presence
+ * under a brand-new empty one - and every session query would return nothing
+ * while every individual part looked healthy. An unattached space is a setup
+ * step that has not happened, so say so and let the operator attach it.
+ */
+export const resolvePresenceScope = async (
+    input: unknown
+): Promise<PresenceScopeResolution> => {
+    const raw = (input ?? {}) as Record<string, unknown>;
+    const squadId = typeof raw.squadId === 'string' ? raw.squadId.trim() : '';
+    const meepsSpaceId =
+        typeof raw.meepsSpaceId === 'string' ? raw.meepsSpaceId.trim() : '';
+
+    // An explicit squad id wins. It is already the scope; nothing to resolve.
+    if (squadId) {
+        return {
+            ok: true,
+            squadId,
+            meepsSpaceId: meepsSpaceId || undefined,
+        };
+    }
+
+    if (!meepsSpaceId) {
+        return {
+            ok: false,
+            reason: 'missing_scope',
+            error: 'squadId or meepsSpaceId is required',
+        };
+    }
+
+    const resolved = await getSquadIdForAttachment('meeps_space', meepsSpaceId);
+    if (!resolved) {
+        return {
+            ok: false,
+            reason: 'unattached_space',
+            // Actionable on purpose: the fix is one API call, and the operator
+            // needs to know it is a wiring gap rather than a bad event.
+            error:
+                `Meeps space ${meepsSpaceId} is not attached to a squad. ` +
+                `Attach it with POST /api/squads/:squadId/attachments ` +
+                `{ "kind": "meeps_space", "externalId": "${meepsSpaceId}" }.`,
+        };
+    }
+
+    return { ok: true, squadId: resolved, meepsSpaceId };
 };
 
 /**
