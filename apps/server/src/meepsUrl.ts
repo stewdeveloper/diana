@@ -6,12 +6,46 @@
  */
 
 /**
+ * Which scheme should a bare host default to?
+ *
+ * Railway's private network carries no TLS - traffic is already encrypted by a
+ * Wireguard tunnel, and nothing terminates HTTPS on a `*.railway.internal`
+ * name, so an https:// URL there cannot connect at all. Defaulting every bare
+ * host to https therefore produced a config that looked right and could never
+ * work. Docker Compose service names (`meeps`, `meeps:4000`) have the same
+ * property: no dots, no public CA, plain HTTP inside the network.
+ *
+ * Public hosts keep defaulting to https - downgrading those would be worse than
+ * the bug this fixes.
+ */
+function defaultSchemeFor(host: string): 'http:' | 'https:' {
+    const hostname = host
+        .replace(/[/?#].*$/, '')
+        .split(':')[0]
+        .toLowerCase();
+
+    const isInternal =
+        hostname.endsWith('.railway.internal') ||
+        hostname.endsWith('.internal') ||
+        hostname === 'localhost' ||
+        hostname.endsWith('.localhost') ||
+        // A bare label with no dot is a container/service name, not a domain.
+        !hostname.includes('.');
+
+    return isInternal ? 'http:' : 'https:';
+}
+
+/**
  * Resolve `MEEPS_WEBHOOK_URL` + a path into an absolute URL.
  *
  * `fetch` requires a scheme, and the env var is frequently set to a bare host
  * (`meeps.railway.internal`) or a protocol-relative one. Returns null when the
  * variable is unset or cannot be parsed, logging the reason — callers treat
  * null as "not configured, skip silently".
+ *
+ * An explicit scheme is never rewritten, including a wrong one: silently
+ * "correcting" an operator's URL hides a misconfiguration instead of surfacing
+ * it. Only the default for a bare host is inferred, by `isTlsTerminatedHost`.
  */
 export function resolveMeepsUrl(
     rawBaseUrl: string | undefined,
@@ -24,10 +58,10 @@ export function resolveMeepsUrl(
     if (/^https?:\/\//i.test(baseUrl)) {
         normalizedBaseUrl = baseUrl;
     } else if (/^\/\//.test(baseUrl)) {
-        // Protocol-relative URL: //host -> https://host
-        normalizedBaseUrl = 'https:' + baseUrl;
+        // Protocol-relative URL: //host -> inferred scheme.
+        normalizedBaseUrl = defaultSchemeFor(baseUrl.slice(2)) + baseUrl;
     } else {
-        normalizedBaseUrl = 'https://' + baseUrl;
+        normalizedBaseUrl = defaultSchemeFor(baseUrl) + '//' + baseUrl;
     }
 
     const url = normalizedBaseUrl.replace(/\/$/, '') + path;
