@@ -110,7 +110,11 @@ const squadExists = async (squadId: string): Promise<boolean> => {
 
 export type PresenceScopeResolution =
     | { ok: true; squadId: string; meepsSpaceId?: string }
-    | { ok: false; reason: 'missing_scope' | 'unattached_space'; error: string };
+    | {
+          ok: false;
+          reason: 'missing_scope' | 'unattached_space';
+          error: string;
+      };
 
 /**
  * Work out which squad an inbound event belongs to.

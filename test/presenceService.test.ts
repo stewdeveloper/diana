@@ -307,15 +307,23 @@ describe('resolvePresenceScope', () => {
     it('passes an explicit squadId straight through without a lookup', async () => {
         const scope = await resolvePresenceScope({ squadId: 'sq1' });
 
-        expect(scope).toEqual({ squadId: 'sq1', ok: true, meepsSpaceId: undefined });
+        expect(scope).toEqual({
+            squadId: 'sq1',
+            ok: true,
+            meepsSpaceId: undefined,
+        });
         // The point: Meeps that already knows the squad costs zero queries.
         expect(queryMock).not.toHaveBeenCalled();
     });
 
     it('resolves a Meeps space through its squad attachment', async () => {
-        queryMock.mockResolvedValueOnce({ rows: [{ squad_id: 'sq-resolved' }] });
+        queryMock.mockResolvedValueOnce({
+            rows: [{ squad_id: 'sq-resolved' }],
+        });
 
-        const scope = await resolvePresenceScope({ meepsSpaceId: 'space-uuid' });
+        const scope = await resolvePresenceScope({
+            meepsSpaceId: 'space-uuid',
+        });
 
         expect(scope).toEqual({
             ok: true,
