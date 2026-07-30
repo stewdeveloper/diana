@@ -1,5 +1,6 @@
 jest.mock('../packages/diana-core/src/core/presence/presenceService', () => ({
     storePresenceEvent: jest.fn(),
+    resolvePresenceScope: jest.fn(),
     setPresenceConsent: jest.fn(),
     getPresenceConsentForUser: jest.fn(),
     getPresenceForSquad: jest.fn(),
@@ -65,11 +66,30 @@ const validJoin = {
 
 const ORIGINAL_SECRET = process.env.MEEPS_INBOUND_SECRET;
 
+const resolvePresenceScopeMock =
+    presenceService.resolvePresenceScope as jest.Mock;
+
 beforeEach(() => {
     jest.clearAllMocks();
     jest.spyOn(console, 'log').mockImplementation(() => undefined);
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
     process.env.MEEPS_INBOUND_SECRET = 'shh';
+    // Default: the scope is whatever the sender put on the event. Cases that
+    // care about resolution override this. Mirrors the real function, which
+    // passes an explicit squadId straight through without a lookup.
+    resolvePresenceScopeMock.mockImplementation(
+        async (raw: Record<string, unknown>) => {
+            const squadId =
+                typeof raw?.squadId === 'string' ? raw.squadId.trim() : '';
+            return squadId
+                ? { ok: true, squadId }
+                : {
+                      ok: false,
+                      reason: 'missing_scope',
+                      error: 'squadId or meepsSpaceId is required',
+                  };
+        }
+    );
 });
 
 afterEach(() => {
@@ -456,5 +476,139 @@ describe('DELETE /api/presence/user/:meepsUserId', () => {
         );
 
         expect(res.status).toHaveBeenCalledWith(500);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Scope: Meeps sends its own space id
+// ---------------------------------------------------------------------------
+
+describe('presence scope resolution at the API edge', () => {
+    const spaceJoin = {
+        type: 'voice.joined',
+        meepsSpaceId: 'space-uuid',
+        meepsUserId: 'user-1',
+        occurredAt: '2026-07-29T18:00:00.000Z',
+        channelId: 'chan-1',
+    };
+
+    it('accepts an event scoped by meepsSpaceId and stores it against the resolved squad', async () => {
+        resolvePresenceScopeMock.mockResolvedValue({
+            ok: true,
+            squadId: 'sq-resolved',
+            meepsSpaceId: 'space-uuid',
+        });
+        storePresenceEventMock.mockResolvedValue('stored');
+        const res = makeRes();
+
+        await receivePresenceEvent(makeReq({ body: spaceJoin }), res);
+
+        expect(res.status).toHaveBeenCalledWith(200);
+        const stored = storePresenceEventMock.mock.calls[0][0];
+        expect(stored.squadId).toBe('sq-resolved');
+        expect(stored.meepsSpaceId).toBe('space-uuid');
+    });
+
+    // The reason resolution happens before validation: the id is derived from
+    // squadId, so resolving afterwards would key the same event two ways and
+    // defeat the deduplication the whole contract depends on.
+    it('builds the idempotency key from the resolved squad, not the space', async () => {
+        resolvePresenceScopeMock.mockResolvedValue({
+            ok: true,
+            squadId: 'sq-resolved',
+            meepsSpaceId: 'space-uuid',
+        });
+        storePresenceEventMock.mockResolvedValue('stored');
+
+        await receivePresenceEvent(makeReq({ body: spaceJoin }), makeRes());
+        const viaSpace = storePresenceEventMock.mock.calls[0][0].eventId;
+
+        storePresenceEventMock.mockClear();
+        await receivePresenceEvent(
+            makeReq({
+                body: {
+                    type: 'voice.joined',
+                    squadId: 'sq-resolved',
+                    meepsUserId: 'user-1',
+                    occurredAt: '2026-07-29T18:00:00.000Z',
+                    channelId: 'chan-1',
+                },
+            }),
+            makeRes()
+        );
+        const viaSquad = storePresenceEventMock.mock.calls[0][0].eventId;
+
+        expect(viaSpace).toBe(viaSquad);
+    });
+
+    it('400s an unattached space with the call that fixes it', async () => {
+        resolvePresenceScopeMock.mockResolvedValue({
+            ok: false,
+            reason: 'unattached_space',
+            error: 'Meeps space space-uuid is not attached to a squad. Attach it with POST /api/squads/:squadId/attachments ...',
+        });
+        const res = makeRes();
+
+        await receivePresenceEvent(makeReq({ body: spaceJoin }), res);
+
+        expect(res.status).toHaveBeenCalledWith(400);
+        expect(res.json.mock.calls[0][0].error).toContain('not attached');
+        expect(storePresenceEventMock).not.toHaveBeenCalled();
+    });
+
+    it('resolves a batch of one space once rather than per event', async () => {
+        resolvePresenceScopeMock.mockResolvedValue({
+            ok: true,
+            squadId: 'sq-resolved',
+            meepsSpaceId: 'space-uuid',
+        });
+        storePresenceEventMock.mockResolvedValue('stored');
+        const res = makeRes();
+
+        const events = [0, 1, 2, 3].map((i) => ({
+            ...spaceJoin,
+            occurredAt: `2026-07-29T18:0${i}:00.000Z`,
+        }));
+
+        await receivePresenceBatch(makeReq({ body: { events } }), res);
+
+        expect(res.status).toHaveBeenCalledWith(200);
+        expect(storePresenceEventMock).toHaveBeenCalledTimes(4);
+        // The memo is the point: four events, one attachment lookup.
+        expect(resolvePresenceScopeMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('still resolves each distinct space in a mixed batch', async () => {
+        resolvePresenceScopeMock.mockImplementation(
+            async (raw: Record<string, unknown>) => ({
+                ok: true,
+                squadId: `squad-for-${raw.meepsSpaceId}`,
+                meepsSpaceId: raw.meepsSpaceId as string,
+            })
+        );
+        storePresenceEventMock.mockResolvedValue('stored');
+
+        await receivePresenceBatch(
+            makeReq({
+                body: {
+                    events: [
+                        { ...spaceJoin, meepsSpaceId: 'space-a' },
+                        { ...spaceJoin, meepsSpaceId: 'space-b' },
+                        { ...spaceJoin, meepsSpaceId: 'space-a' },
+                    ],
+                },
+            }),
+            makeRes()
+        );
+
+        expect(resolvePresenceScopeMock).toHaveBeenCalledTimes(2);
+        const squads = storePresenceEventMock.mock.calls.map(
+            (c) => c[0].squadId
+        );
+        expect(squads).toEqual([
+            'squad-for-space-a',
+            'squad-for-space-b',
+            'squad-for-space-a',
+        ]);
     });
 });

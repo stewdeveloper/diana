@@ -9,10 +9,12 @@ import {
     exportPresenceForUser,
     getPresenceConsentForUser,
     getPresenceForSquad,
+    resolvePresenceScope,
     setPresenceConsent,
     storePresenceEvent,
 } from '../presence/presenceService';
 import { validatePresenceEvent } from '../presenceTypes';
+import type { PresenceValidationResult } from '../presenceTypes';
 import { getParamValue } from './requestUtils';
 
 /**
@@ -60,6 +62,41 @@ export function requireMeepsSecret(
 }
 
 /**
+ * Resolve an event's scope, then validate it.
+ *
+ * Two steps in one place because the order matters and is easy to get wrong:
+ * the idempotency key is built from `squadId` during validation, so the scope
+ * has to be resolved *first* or the same event sent as `meepsSpaceId` and as
+ * `squadId` would produce two different keys and therefore two rows.
+ */
+async function resolveAndValidateCached(
+    raw: unknown,
+    cache?: Map<string, string>
+): Promise<PresenceValidationResult> {
+    const spaceId = (raw as Record<string, unknown> | null)?.meepsSpaceId;
+    const cacheKey = typeof spaceId === 'string' ? spaceId.trim() : '';
+    const cached = cacheKey ? cache?.get(cacheKey) : undefined;
+
+    const scope = cached
+        ? ({ ok: true, squadId: cached, meepsSpaceId: cacheKey } as const)
+        : await resolvePresenceScope(raw);
+
+    if (!scope.ok) return { ok: false, error: scope.error };
+    if (cacheKey && cache) cache.set(cacheKey, scope.squadId);
+
+    return validatePresenceEvent({
+        ...(raw as Record<string, unknown>),
+        squadId: scope.squadId,
+        ...(scope.meepsSpaceId ? { meepsSpaceId: scope.meepsSpaceId } : {}),
+    });
+}
+
+/** Single-event form: nothing to memoise across one call. */
+function resolveAndValidate(raw: unknown): Promise<PresenceValidationResult> {
+    return resolveAndValidateCached(raw);
+}
+
+/**
  * Receive one presence event.
  *
  * 200 for both stored and duplicate - a duplicate means the sender already
@@ -76,7 +113,7 @@ export async function receivePresenceEvent(
     req: Request,
     res: Response
 ): Promise<void> {
-    const validation = validatePresenceEvent(req.body);
+    const validation = await resolveAndValidate(req.body);
     if (!validation.ok || !validation.event) {
         res.status(400).json({ error: validation.error });
         return;
@@ -138,9 +175,15 @@ export async function receivePresenceBatch(
         error?: string;
     }> = [];
 
+    // A backfill is overwhelmingly one space's history, so resolving the scope
+    // per event would repeat the same attachment lookup up to 500 times. Memoise
+    // it for the life of the request - an attachment cannot change mid-batch in
+    // any way that should split one payload across two squads.
+    const scopeCache = new Map<string, string>();
+
     try {
         for (const raw of body.events) {
-            const validation = validatePresenceEvent(raw);
+            const validation = await resolveAndValidateCached(raw, scopeCache);
             if (!validation.ok || !validation.event) {
                 results.push({ ok: false, error: validation.error });
                 continue;
