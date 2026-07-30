@@ -108,7 +108,10 @@ function toMs(value: string | number | null): number | null {
  * happens in customs and in Arena, and calling that a win for the squad would be
  * a straight-up lie on the recap card.
  */
-function resolveWin(participants: unknown, squadPuuids: Set<string>): boolean | null {
+function resolveWin(
+    participants: unknown,
+    squadPuuids: Set<string>
+): boolean | null {
     if (!Array.isArray(participants)) return null;
 
     const verdicts = new Set<boolean>();
@@ -165,9 +168,7 @@ export const findMatchesInWindow = async (
             if (startedAt === null) return null;
             const endedAt =
                 toMs(row.gameEndTime) ??
-                (row.gameDuration
-                    ? startedAt + row.gameDuration * 1000
-                    : null);
+                (row.gameDuration ? startedAt + row.gameDuration * 1000 : null);
             return {
                 matchId: row.matchId,
                 startedAt,

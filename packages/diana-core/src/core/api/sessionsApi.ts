@@ -32,7 +32,9 @@ export async function listSquadSessions(
         return;
     }
 
-    const rawLimit = Number(getParamValue(req.query.limit as string | undefined));
+    const rawLimit = Number(
+        getParamValue(req.query.limit as string | undefined)
+    );
     // Clamped rather than rejected: a silly limit is a caller mistake, not a
     // reason to fail a read.
     const limit =

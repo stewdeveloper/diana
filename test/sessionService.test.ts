@@ -193,7 +193,10 @@ describe('findMatchesInWindow', () => {
     it('returns matches in the order they were played', async () => {
         queryMock.mockResolvedValue({
             rows: [
-                matchRow({ matchId: 'B', gameStartTime: String(T0 + 30 * MIN) }),
+                matchRow({
+                    matchId: 'B',
+                    gameStartTime: String(T0 + 30 * MIN),
+                }),
                 matchRow({ matchId: 'A', gameStartTime: String(T0 + 5 * MIN) }),
             ],
         });
@@ -408,6 +411,9 @@ describe('rebuildSessionsForSquad', () => {
 
         await rebuildSessionsForSquad('sq1', { since: '2026-07-01T00:00:00Z' });
 
-        expect(presenceMock).toHaveBeenCalledWith('sq1', '2026-07-01T00:00:00Z');
+        expect(presenceMock).toHaveBeenCalledWith(
+            'sq1',
+            '2026-07-01T00:00:00Z'
+        );
     });
 });
