@@ -11,6 +11,7 @@ import {
     pluginsApiRouter,
     squadsApiRouter,
     presenceApiRouter,
+    sessionsApiRouter,
     authApiRouter,
     requireAuth,
     setPluginMessageAdapter,
@@ -122,6 +123,10 @@ async function main() {
     // Protected routes (require authentication)
     app.use('/api/plugins', requireAuth, pluginsApiRouter);
     app.use('/api/squads', requireAuth, squadsApiRouter);
+    // Sessions (DN-6) sit behind the dashboard JWT, not the Meeps secret: a
+    // session records who was at their computer and with whom, which is personal
+    // data about a group rather than a machine-to-machine fact.
+    app.use('/api/sessions', requireAuth, sessionsApiRouter);
     // Presence ingestion (DN-5) is machine-to-machine from the Meeps server, so
     // it carries its own shared-secret gate instead of the dashboard's JWT.
     app.use('/api/presence', presenceApiRouter);

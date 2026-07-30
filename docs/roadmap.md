@@ -253,9 +253,28 @@ Scheduled in R3 rather than R1 because it is not a blocker on charging money - b
 | ID          | Item                                                                           | Owner     | Effort | Rate |
 | ----------- | ------------------------------------------------------------------------------ | --------- | ------ | ---- |
 | ✅ **DN-5** | Presence ingestion - accept `voice.*` and `client.*` events from Meeps         | `[Diana]` | S      | zero |
-| ⬜ **DN-6** | Session service - sessionise matches + voice presence into a `sessions` table  | `[Diana]` | M      | zero |
+| ✅ **DN-6** | Session service - sessionise matches + voice presence into a `sessions` table  | `[Diana]` | M      | zero |
 | ⬜ **MP-6** | Native event rendering - match cards, LP graphs, recap cards as first-class UI | `[Meeps]` | M      | -    |
 | ⬜ **MP-3** | SFU voice (LiveKit or mediasoup) replacing mesh                                | `[Meeps]` | M–L    | -    |
+
+> **The presence path, as built.** DN-5 and Meeps' MP-07 were each shipped and
+> never connected — Meeps recorded voice intervals locally and nothing sent them,
+> so `presence_events` held nothing. Three things closed the gap: Meeps grew an
+> outbox (`dianaPresence.js`, migration 037) that ships each interval as
+> `voice.joined` + `voice.left`; DN-5 learned to resolve a `meepsSpaceId` to a
+> squad through `squad_attachments`, because Meeps has no way to know a Diana
+> squad uuid; and DN-6 sessionises the result. **Two things still gate real
+> data**: `MEEPS_INBOUND_SECRET` on Diana with its `DIANA_PRESENCE_SECRET`
+> counterpart on Meeps, and a `meeps_space` attachment row — there were none, so
+> every event would have answered `unattached_space`.
+>
+> **Match attribution is squad-level and works today.** `squad_summoners` says
+> which puuids a squad tracks, so "which games happened during this night" needs
+> no identity linking. Only per-player attribution — "was Louis in voice for game
+> 5" — waits on DN-3/MP-05, and the recap line quoted below is the part that
+> waits. `session_participants` is therefore keyed on `meeps_user_id`, not puuid:
+> keying on puuid would exclude exactly the friend who was in the call all night
+> without playing.
 
 ### 7.1 ⭐ Session Recap - the flagship
 
@@ -474,7 +493,7 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 | DN-3      | Riot account linking + opt-out       | §5.3, §6 R1                                         |
 | DN-4      | Kill betting                         | §6 R1 - **doc deletion only, no code existed**      |
 | DN-5      | Presence ingestion                   | ✅ **Shipped** - §7 R2                              |
-| DN-6      | Session service                      | §7 R2                                               |
+| DN-6      | Session service                      | ✅ **Shipped** - §7 R2                              |
 | DN-7      | Rate limiter, cache, Postgres config | §8.6 R3                                             |
 | DN-8      | Riot compliance package              | §6 R1, **week 1**                                   |
 | DN-9      | Old roadmap Phase 0                  | ✅ **Shipped** - §3.1                               |
@@ -515,7 +534,8 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 - **R1** `[Diana]`: `squads` + squad attachments (guild ⇄ space) — ✅ `014_squads.sql`; `identities` + `riot_account_links` and per-player privacy flags — DN-3, outstanding.
 - **R1** `[Meeps]`: `030_diana_events.sql` — the event log, `event_id` as primary key for idempotency. ✅ shipped (it landed as 030, not 029).
 - **R1** `[Meeps]`: `spaces`, `channels`, `memberships`, invite links — ✅ `032_spaces.sql`, `033_messages_channel_id_backfill.sql`; roles/permissions — ✅ `035_space_bans.sql`; consent + export records — MP-7, outstanding.
-- **R2**: voice presence — ✅ `015_presence.sql` (`presence_events`, `presence_consent`); `sessions` and presence intervals — DN-6, outstanding.
+- **R2** `[Diana]`: voice presence — ✅ `015_presence.sql` (`presence_events`, `presence_consent`); `sessions`, `session_participants`, `session_matches` — ✅ `016_sessions.sql` (DN-6, derived and rebuildable).
+- **R2** `[Meeps]`: durable voice intervals — ✅ `031_voice_presence.sql` (MP-07); `users.public_id` + presence delivery tracking — ✅ `037_presence_outbox.sql`.
 - **R3**: live-game dedup state (**separate from `summoners.currentMatchId`**); Calls windows + accuracy stats; plugin config tables; `diana-builds` tables migrated from Meeps.
 
 ### 13.4 Conventions for implementers
