@@ -196,17 +196,52 @@ describe('createMeepsEventAdapter', () => {
         ).resolves.toBeUndefined();
     });
 
-    it('accepts a bare host and upgrades it to https', async () => {
+    it('accepts a bare public host and upgrades it to https', async () => {
         const fetchMock = mockFetchSequence(res(200));
         global.fetch = fetchMock as unknown as typeof fetch;
 
         await loadAdapter({
             ...CONFIGURED,
-            MEEPS_WEBHOOK_URL: 'meeps.railway.internal',
+            MEEPS_WEBHOOK_URL: 'meeps.up.railway.app',
         }).emit(EVENT);
 
         expect(fetchMock.mock.calls[0][0]).toBe(
-            'https://meeps.railway.internal/api/diana-events'
+            'https://meeps.up.railway.app/api/diana-events'
+        );
+    });
+
+    // Railway's private network has no TLS - `.railway.internal` hosts speak
+    // plain HTTP behind a Wireguard tunnel. Defaulting a bare internal host to
+    // https produced a connection that could never succeed, so the scheme is
+    // chosen from the host rather than fixed.
+    it('leaves a bare internal host on http, which is all it speaks', async () => {
+        const fetchMock = mockFetchSequence(res(200));
+        global.fetch = fetchMock as unknown as typeof fetch;
+
+        await loadAdapter({
+            ...CONFIGURED,
+            MEEPS_WEBHOOK_URL: 'meeps.railway.internal:4000',
+        }).emit(EVENT);
+
+        expect(fetchMock.mock.calls[0][0]).toBe(
+            'http://meeps.railway.internal:4000/api/diana-events'
+        );
+    });
+
+    // An explicit scheme is the operator's decision and is never rewritten -
+    // including the wrong one, which would otherwise fail silently as a
+    // "working" config.
+    it('does not rewrite an explicit scheme, even a mistaken one', async () => {
+        const fetchMock = mockFetchSequence(res(200));
+        global.fetch = fetchMock as unknown as typeof fetch;
+
+        await loadAdapter({
+            ...CONFIGURED,
+            MEEPS_WEBHOOK_URL: 'https://meeps.railway.internal:4000',
+        }).emit(EVENT);
+
+        expect(fetchMock.mock.calls[0][0]).toBe(
+            'https://meeps.railway.internal:4000/api/diana-events'
         );
     });
 

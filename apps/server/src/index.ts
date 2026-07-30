@@ -180,10 +180,17 @@ async function main() {
 
     const servers: ReturnType<typeof app.listen>[] = [];
     const startHttpServer = (port: number, label: string) => {
-        const server = app.listen(port, '0.0.0.0', () => {
-            console.log(
-                `[Diana] Server running on port ${port} (0.0.0.0) ${label}`
-            );
+        // "::", not "0.0.0.0". Railway's private network is IPv6: on legacy
+        // environments a `*.railway.internal` host resolves to an AAAA record
+        // only, so an IPv4-only listener refuses every internal connection at
+        // the TCP layer while the public domain keeps serving normally. Meeps
+        // spent DN-1 in exactly that state, and DN-5's inbound presence path
+        // reaches Diana over the same private network.
+        //
+        // "::" is dual-stack - Linux accepts IPv4 as v4-mapped addresses on the
+        // same socket - so the public edge and localhost are unaffected.
+        const server = app.listen(port, '::', () => {
+            console.log(`[Diana] Server running on port ${port} (::) ${label}`);
         });
         server.on('error', (err) => {
             console.error('[Diana] HTTP server error:', err);
