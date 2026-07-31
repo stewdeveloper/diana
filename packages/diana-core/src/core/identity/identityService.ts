@@ -73,12 +73,26 @@ export const CHALLENGE_TTL_MS = 10 * 60 * 1000;
 /**
  * The icons a challenge may ask for.
  *
- * A small hand-picked set of the free starter icons every account owns. Picking
- * from all ~5000 would frequently name one the player cannot select, which
- * fails verification for a reason they cannot see or fix.
+ * **These must be icons every account can actually select**, and that is a
+ * narrower set than it looks. Data Dragon lists all ~5000 icons and says nothing
+ * about ownership, so a URL resolving proves only that the picture exists —
+ * most icons are event, mastery or purchase rewards, and naming one the player
+ * does not own fails the handshake for a reason they can neither see nor fix.
+ * There is no endpoint on the public API that answers "which icons does this
+ * account own", so the set has to be one that needs no lookup.
+ *
+ * 0-28 is the original launch set: present on every account since the game
+ * shipped, always selectable, and the range a brand-new account's default icon
+ * comes from.
+ *
+ * An earlier version of this used 588-597 and described them in this comment as
+ * "free starter icons every account owns". That was asserted rather than
+ * checked, and it is wrong — they are reward icons, so the handshake asked most
+ * players for something they could not set.
  */
 export const CHALLENGE_ICON_IDS = [
-    588, 589, 590, 591, 592, 593, 594, 595, 596, 597,
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    21, 22, 23, 24, 25, 26, 27, 28,
 ] as const;
 
 // ---------------------------------------------------------------------------
