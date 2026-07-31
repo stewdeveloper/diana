@@ -15,6 +15,50 @@ const CHANNEL_EXEMPT_COMMANDS: Record<BotKey, Set<string>> = {
     pathfinder: new Set(['apex-help', 'apex-channel']),
 };
 
+/**
+ * Command ids Discord handed back at registration, keyed by name.
+ *
+ * A command written as `</add:123>` renders in Discord as a clickable chip that
+ * pre-fills the command when tapped, and as plain `/add` text everywhere it
+ * cannot resolve. That turns "here are the two commands you need" from
+ * instructions into two taps, which is most of what onboarding costs.
+ *
+ * Populated by `syncCommandsToDiscord`, which already receives these ids and
+ * previously threw them away. Empty until the first sync - so every reader goes
+ * through `commandMention`, which falls back rather than emitting a broken
+ * mention.
+ */
+const commandIds: Record<BotKey, Map<string, string>> = {
+    diana: new Map(),
+    pathfinder: new Map(),
+};
+
+/**
+ * A command as a clickable mention, or as code if its id is unknown.
+ *
+ * `name` may include subcommands ("link start"): Discord keys the mention on the
+ * *parent* id and carries the subcommand in the label, so only the first word is
+ * looked up.
+ *
+ * Unknown names degrade to `/name` rather than throwing. This runs on every
+ * help render and in the welcome message, both of which can fire before a sync
+ * has happened - a help embed is not worth a crash.
+ */
+export function commandMention(name: string, botKey: BotKey = 'diana'): string {
+    const trimmed = name.trim().replace(/^\//, '');
+    const root = trimmed.split(/\s+/)[0];
+    const id = commandIds[botKey].get(root);
+    return id ? `</${trimmed}:${id}>` : `\`/${trimmed}\``;
+}
+
+/** Test seam, and the reset the registry's own `clearAllCommands` implies. */
+export function setCommandIds(
+    botKey: BotKey,
+    entries: Array<{ id: string; name: string }>
+): void {
+    commandIds[botKey] = new Map(entries.map((c) => [c.name, c.id]));
+}
+
 // Per-user cooldown tracking: key = `botKey:userId:commandName`, value = last-used ms
 const cooldownMap = new Map<string, number>();
 const COOLDOWN_MS = 3000;
@@ -100,17 +144,33 @@ export async function syncCommandsToDiscord(botKey: BotKey): Promise<void> {
     const payload = definitions[botKey].map((c) => c.data.toJSON());
     const guildId = process.env[guildIdEnv];
 
+    // The response is the registered commands, ids and all. Keeping them is what
+    // lets every later message link to a command instead of naming one.
+    let registered: unknown;
     if (guildId) {
-        await rest.put(Routes.applicationGuildCommands(clientId, guildId), {
-            body: payload,
-        });
+        registered = await rest.put(
+            Routes.applicationGuildCommands(clientId, guildId),
+            { body: payload }
+        );
         console.log(
             `[Diana] Registered ${payload.length} slash command(s) for "${botKey}" in guild ${guildId}.`
         );
     } else {
-        await rest.put(Routes.applicationCommands(clientId), { body: payload });
+        registered = await rest.put(Routes.applicationCommands(clientId), {
+            body: payload,
+        });
         console.log(
             `[Diana] Registered ${payload.length} slash command(s) for "${botKey}" globally.`
+        );
+    }
+
+    if (Array.isArray(registered)) {
+        setCommandIds(
+            botKey,
+            registered.filter(
+                (c): c is { id: string; name: string } =>
+                    typeof c?.id === 'string' && typeof c?.name === 'string'
+            )
         );
     }
 }
@@ -135,10 +195,23 @@ export async function handleSlashCommand(
     if (!exempt.has(interaction.commandName) && interaction.guildId) {
         const guildConfig = await getGuildConfig(interaction.guildId);
         if (!guildConfig?.channel_id) {
-            const setupCmd =
-                botKey === 'pathfinder' ? '/apex-channel' : '/setchannel';
+            // Names both remaining steps, not just the one that is blocking.
+            // The old message said "run /setchannel first" and stopped, which
+            // left the player at a second dead end the moment they did - the
+            // gap issue #149 called "gating dead-ends without an explanation".
+            const channelCmd = commandMention(
+                botKey === 'pathfinder' ? 'apex-channel' : 'setchannel',
+                botKey
+            );
+            const addCmd = commandMention(
+                botKey === 'pathfinder' ? 'apex-add' : 'add',
+                botKey
+            );
             await interaction.reply({
-                content: `No notification channel has been set up yet. Please run \`${setupCmd}\` first.`,
+                content:
+                    `Almost there — this server needs two commands before anything else works.\n` +
+                    `**1.** ${channelCmd} — pick where results get posted.\n` +
+                    `**2.** ${addCmd} — track your first player.`,
                 flags: MessageFlags.Ephemeral,
             });
             return;

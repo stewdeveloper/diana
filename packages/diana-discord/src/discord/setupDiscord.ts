@@ -7,30 +7,45 @@ import {
     syncCommandsToDiscord,
     handleSlashCommand,
     handleAutocomplete,
+    commandMention,
 } from './commandRegistry';
 
-const WELCOME_MESSAGES: Record<BotKey, string> = {
-    diana:
-        "Hi! I'm **Diana**, a League of Legends match tracking bot.\n\n" +
-        'Get started:\n' +
-        '1. Run `/setchannel` to choose where match notifications are posted.\n' +
-        '2. Run `/add` to start tracking summoners.\n' +
-        '3. Run `/help` to see all available commands.' +
-        '\n\n' +
-        'Please upvote on [top.gg](https://top.gg/bot/1327445461107347567) and share Diana if you find her useful! [Support development here](https://buymeacoffee.com/yngstew).',
-    pathfinder:
-        "Hi! I'm **Pathfinder**, an Apex Legends tracking bot.\n\n" +
-        'Get started:\n' +
-        '1. Run `/apex-channel` to choose where notifications are posted.\n' +
-        '2. Run `/apex-add` to start tracking players.\n' +
-        '3. Run `/apex-help` to see all available commands.',
-};
+/**
+ * The first thing a server ever sees.
+ *
+ * Built per send rather than held as a constant so the commands render as
+ * clickable mentions: ids only exist after the first sync, and a constant
+ * evaluated at module load would freeze the plain-text fallback in place
+ * forever.
+ *
+ * Two steps, not three. `/help` was listed as step 3 and is not a step - it is
+ * what you run when you are stuck, and telling somebody to read the manual as
+ * part of setup is how a two-command setup starts feeling like a chore.
+ */
+function buildWelcomeMessage(botKey: BotKey): string {
+    if (botKey === 'pathfinder') {
+        return (
+            "Hi! I'm **Pathfinder**, an Apex Legends tracking bot.\n\n" +
+            `**1.** ${commandMention('apex-channel', 'pathfinder')} — pick where results get posted.\n` +
+            `**2.** ${commandMention('apex-add', 'pathfinder')} — track your first player.\n\n` +
+            `That is it. ${commandMention('apex-help', 'pathfinder')} if you get stuck.`
+        );
+    }
+
+    return (
+        "Hi! I'm **Diana**. I track your group's League games and post the results here.\n\n" +
+        `**1.** ${commandMention('setchannel')} — pick where results get posted.\n` +
+        `**2.** ${commandMention('add')} — track your first player.\n\n` +
+        `That is it — everything after that posts by itself. ${commandMention('help')} if you get stuck.\n\n` +
+        'Please upvote on [top.gg](https://top.gg/bot/1327445461107347567) and share Diana if you find her useful! [Support development here](https://buymeacoffee.com/yngstew).'
+    );
+}
 
 async function sendWelcomeMessage(guild: Guild, botKey: BotKey): Promise<void> {
     try {
         const systemChannel = guild.systemChannel;
         if (systemChannel?.isSendable()) {
-            await systemChannel.send(WELCOME_MESSAGES[botKey]);
+            await systemChannel.send(buildWelcomeMessage(botKey));
             return;
         }
         const textChannel = guild.channels.cache
@@ -40,7 +55,7 @@ async function sendWelcomeMessage(guild: Guild, botKey: BotKey): Promise<void> {
             .sort((a: any, b: any) => a.position - b.position)
             .first();
         if (textChannel?.isSendable()) {
-            await textChannel.send(WELCOME_MESSAGES[botKey]);
+            await textChannel.send(buildWelcomeMessage(botKey));
         }
     } catch (err) {
         console.error(
