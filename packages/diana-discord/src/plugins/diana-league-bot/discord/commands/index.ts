@@ -4,6 +4,7 @@ import { mvpOfTheWeekCommand } from './mvpOfTheWeekCommand';
 import { leaderboardCommand } from './leaderboardCommand';
 import { liveGameCommand } from './liveGameCommand';
 import { compareCommand } from './compareCommand';
+import { wrappedCommand } from './wrappedCommand';
 import { summonerInfoCommand } from './summonerInfoCommand';
 import { setChannelCommand } from './setChannelCommand';
 import { addSummonerCommand } from './addSummonerCommand';
@@ -20,6 +21,7 @@ export const leagueDiscordCommands = [
     leaderboardCommand,
     liveGameCommand,
     compareCommand,
+    wrappedCommand,
     summonerInfoCommand,
     championStatsCommand,
     setChannelCommand,
@@ -38,6 +40,7 @@ export {
     leaderboardCommand,
     liveGameCommand,
     compareCommand,
+    wrappedCommand,
     summonerInfoCommand,
     championStatsCommand,
     setChannelCommand,

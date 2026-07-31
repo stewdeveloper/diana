@@ -59,7 +59,7 @@ The unit of value is the **squad**: the 3–6 people who queue together on a Tue
 
 **It is not a League bot - it is a plugin platform that currently ships two game plugins**, `diana-league-bot` and `diana-apex-bot` (Pathfinder).
 
-**Command surface (23 + core).** League (15): `/add` `/remove` `/summoner` `/champion` `/iotw` `/mvp` `/compare` `/leaderboard` `/livegame` `/setchannel` `/config` `/privacy` `/link` `/unlink` `/help`. Apex (8): `/apex-add` `/apex-remove` `/apex-player` `/apex-matches` `/apex-predator` `/apex-uid` `/apex-channel` `/apex-help`. Core: `/ping`.
+**Command surface (24 + core).** League (16): `/add` `/remove` `/summoner` `/champion` `/iotw` `/mvp` `/compare` `/leaderboard` `/livegame` `/wrapped` `/setchannel` `/config` `/privacy` `/link` `/unlink` `/help`. Apex (8): `/apex-add` `/apex-remove` `/apex-player` `/apex-matches` `/apex-predator` `/apex-uid` `/apex-channel` `/apex-help`. Core: `/ping`.
 
 **The pipeline.** One cron per minute → check each tracked summoner's latest match id → on a new completed match, fetch full match-v5 → store the **entire participants/teams JSON** (including the ~100-metric `challenges` block) in `match_details` → compute **AI score and lobby placement for all ten players** → diff ranked standing into `rank_tracking` → emit a `MessagePayload` → fan out through `MessageAdapter` to Discord **and** the Meeps webhook.
 
@@ -335,14 +335,14 @@ so declaring it would have put self-service behind Manage Server too.
 | ----------- | ------------------------------------------------------------------------------ | --------- | ------ | ---- |
 | ✅ **DN-5** | Presence ingestion - accept `voice.*` and `client.*` events from Meeps         | `[Diana]` | S      | zero |
 | ✅ **DN-6** | Session service - sessionise matches + voice presence into a `sessions` table  | `[Diana]` | M      | zero |
-| 🔨 **MP-6** | Native event rendering - match cards, LP graphs, recap cards as first-class UI | `[Meeps]` | M      | -    |
+| ✅ **MP-6** | Native event rendering - match cards, LP graphs, recap cards as first-class UI | `[Meeps]` | M      | -    |
 | ✅ **MP-3** | SFU voice (LiveKit or mediasoup) replacing mesh                                | `[Meeps]` | M–L    | -    |
 
-> **MP-6 is half done.** Meeps' MP-10 shipped the `diana_events` read path - a
-> query API, WebSocket fan-out and the `spaces.squad_id` authorisation join - so
-> the events Diana had been writing since DN-1 are finally readable. What remains
-> is the rendering itself. Diana's side of Session Recap (§7.1) emits into that
-> read path; the card is drawn on the Meeps side.
+> **MP-6 is done.** Meeps' MP-10 shipped the `diana_events` read path - a query
+> API, WebSocket fan-out and the `spaces.squad_id` authorisation join - so the
+> events Diana had been writing since DN-1 became readable, and MP-06 then
+> shipped the rendering: generic event cards, the squad feed rail, and the
+> Session Recap card itself. Both halves of §7.1 are now live.
 
 > **The presence path, as built.** DN-5 and Meeps' MP-07 were each shipped and
 > never connected — Meeps recorded voice intervals locally and nothing sent them,
@@ -377,10 +377,11 @@ so declaring it would have put self-service behind Manage Server too.
 
 **Needs:** DN-1, DN-5, DN-6, MP-6 · **Effort:** M · **Rate:** zero (entirely stored data)
 
-> **🔨 Diana's half is built.** Migration 017 adds `sessions.recap_emitted_at`; a
+> **✅ Shipped, both sides.** Migration 017 adds `sessions.recap_emitted_at`; a
 > core cron sweeps every five minutes, closes settled nights and emits
 > `session.completed` carrying the figures - participants by Meeps user id,
-> games in play order, best game and worst game. Meeps draws the card (MP-6).
+> games in play order, best game and worst game. Meeps draws the card, shipped
+> under MP-06.
 >
 > **Three corrections to the example line above, from building it.**
 >
@@ -408,7 +409,7 @@ so declaring it would have put self-service behind Manage Server too.
 > not an event anything can listen for - so the trigger is a sweep, and the wait
 > is the gap rather than the cadence.
 
-### 7.2 Squad Wrapped
+### 7.2 ✅ Squad Wrapped
 
 End-of-split recap card per squad: games, voice hours, most-played duo, best and worst game, the LP journey, the night you went 0-6 - plus, because Meeps owns the chat corpus, the group's most-used word and most-reacted message.
 
@@ -417,6 +418,43 @@ Cheap (all stored data) and the single most shareable artifact producible. This 
 **Timing matters: ship before the next split boundary, not after.**
 
 **Needs:** DN-6, MP-6 · **Effort:** M · **Rate:** zero
+
+> **✅ Diana's half is built.** `core/wrapped/` computes the figures;
+> `GET /api/squads/:squadId/wrapped` is what Meeps fetches to draw the card, and
+> `/wrapped` renders a free-tier version in Discord. **No migration** - every
+> figure comes from tables that already exist. Design:
+> `docs/superpowers/specs/2026-07-31-squad-wrapped-design.md`.
+>
+> **Four things worth recording.**
+>
+> 1. **It is a query, not an event, and that is not a shortcut.** The card is
+>    assembled from two sources - these figures plus the chat corpus only Meeps
+>    has. A push would make Meeps hold half a card until it could join its own
+>    half; a pull lets it assemble at render time. `GET /api/identity/resolve`
+>    is a route for the same reason. §13.4's convention is untouched: a variant
+>    needing a row shape and an idempotency key is one that gets _delivered_.
+> 2. **There is no split calendar and there will not be one.** Riot publishes no
+>    split dates - `gameVersion` is a patch, a tier is a standing - so any table
+>    here would need a deploy per split and would silently produce wrong windows
+>    for every self-hoster on an older version. The period is an explicit
+>    `[from, to)` with calendar-derivable presets, and the default is labelled
+>    "Last 90 days" rather than claiming to be a split. An operator who knows the
+>    real dates passes them in.
+> 3. **Wrapped counts distinct matches; the digest counts player-games.** Summing
+>    `matchesPlayed` across players is defensible beside per-player rows and
+>    indefensible on a card telling five people they played 412 games when they
+>    played 96. The two figures are meant to differ.
+> 4. **Voice hours needed the identity table, and are its first internal
+>    reader.** Privacy is keyed on the puuid so nobody must identify themselves
+>    to become invisible; voice is keyed on `meeps_user_id` so the friend who
+>    never plays is still counted. `notHiddenMeepsUserPredicate` joins them
+>    through `identity_accounts`. Until now that table only served Meeps over
+>    HTTP.
+>
+> **Nothing fires a Wrapped on a date.** That needs the calendar above, and the
+> on-demand path is the better acquisition loop anyway - a person choosing to
+> post the card is the loop. The Meeps half (chat corpus + rendering) is a
+> separate PR in that repo.
 
 ### 7.3 Presence-aware notification routing
 
@@ -602,7 +640,7 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 | MP-3      | SFU voice                            | ✅ **Shipped** - §7 R2                              |
 | MP-4      | Self-serve onboarding                | ✅ **Shipped** - §6 R1                              |
 | MP-5      | macOS build                          | §6 R1 (Meeps MP-12)                                 |
-| MP-6      | Native event rendering               | 🔨 read path shipped (MP-10) - §7 R2                |
+| MP-6      | Native event rendering               | ✅ **Shipped** - MP-10 read path + MP-06 cards      |
 | MP-7      | Consent & data surface               | ✅ **Shipped** - §6 R1 (Meeps MP-13)                |
 | MP-8      | Bridge productisation                | ✅ **Shipped** - §6 R1                              |
 | MP-9      | Typed backend + coverage             | §8.6 R3                                             |
@@ -616,11 +654,11 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 | DN-8      | Riot compliance package              | §6 R1, **week 1**                                   |
 | DN-9      | Old roadmap Phase 0                  | ✅ **Shipped** - §3.1                               |
 | ~~DN-10~~ | ~~Migration tooling~~                | **Dropped** — versions table already exists; see §6 |
-| 6.3.1     | Session Recap                        | 🔨 Diana's half shipped - §7.1                      |
+| 6.3.1     | Session Recap                        | ✅ **Shipped** both sides - §7.1                    |
 | 6.3.2     | Session Curve                        | §8.1                                                |
 | 6.3.3     | LCU presence & champ select          | §8.2                                                |
 | 6.3.4     | Squad Draft                          | §8.3                                                |
-| 6.3.5     | Squad Wrapped                        | §7.2                                                |
+| 6.3.5     | Squad Wrapped                        | ✅ Diana's half shipped - §7.2                      |
 | 6.3.6     | Presence-aware notifications         | §7.3                                                |
 | 6.3.7     | Cross-game continuity                | §10, ideas                                          |
 | 6.4       | Calls                                | §8.5                                                |
@@ -653,7 +691,8 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 - **R1** `[Meeps]`: `030_diana_events.sql` — the event log, `event_id` as primary key for idempotency. ✅ shipped (it landed as 030, not 029).
 - **R1** `[Meeps]`: `spaces`, `channels`, `memberships`, invite links — ✅ `032_spaces.sql`, `033_messages_channel_id_backfill.sql`; roles/permissions — ✅ `035_space_bans.sql`; consent + export records — MP-7, outstanding.
 - **R2** `[Diana]`: voice presence — ✅ `015_presence.sql` (`presence_events`, `presence_consent`); `sessions`, `session_participants`, `session_matches` — ✅ `016_sessions.sql` (DN-6, derived and rebuildable); `sessions.recap_emitted_at` — ✅ `017_session_recaps.sql` (§7.1, delivery bookkeeping rather than derived state).
-- **R2** `[Meeps]`: durable voice intervals — ✅ `031_voice_presence.sql` (MP-07); `users.public_id` + presence delivery tracking — ✅ `037_presence_outbox.sql`.
+- **R2** `[Meeps]`: durable voice intervals — ✅ `031_voice_presence.sql` (MP-07); `users.public_id` + presence delivery tracking — ✅ `037_presence_outbox.sql`; `spaces.squad_id` as a cache of Diana's answer — ✅ `042_space_squad_link.sql` (MP-10).
+- **R2** `[Diana]`: Squad Wrapped (§7.2) needs **none**. Every figure is derived from `match_details`, `match_scores`, `rank_tracking` and the DN-6 session tables, and the card is fetched rather than stored — so there is no delivery bookkeeping to persist and no deploy race between the migration and the app restart.
 - **R3**: live-game dedup state (**separate from `summoners.currentMatchId`**); Calls windows + accuracy stats; plugin config tables; `diana-builds` tables migrated from Meeps.
 
 ### 13.4 Conventions for implementers

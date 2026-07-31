@@ -54,6 +54,7 @@ export const helpCommand: SlashCommand = {
                         '`/livegame <name> [tag]` - Check if a tracked summoner is in a game right now.',
                         '`/compare <player1> <player2>` - Head-to-head and duo stats for two tracked summoners.',
                         '`/leaderboard stats <board>` - Weekly stat boards (KDA, damage, vision...).',
+                        "`/wrapped [period]` - The squad's games, voice hours, duos and highlights.",
                     ].join('\n'),
                     inline: false,
                 },
