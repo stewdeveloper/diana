@@ -36,17 +36,22 @@ function isRetryableStatus(status: number): boolean {
  *
  * This adapter never throws. Meeps being down must not stop Diana posting to
  * Discord — the events are recoverable, a missed match post is not.
+ *
+ * Returns whether Meeps accepted the event. `false` covers every way it did not
+ * arrive: disabled, unconfigured, rejected, or still failing after the last
+ * attempt. Callers that record having sent something must check it — see the
+ * note on `EventAdapter`.
  */
 export function createMeepsEventAdapter(): EventAdapter {
     return {
-        async emit(event: DianaEvent): Promise<void> {
-            if (DISABLE_MEEPS_POSTS) return;
+        async emit(event: DianaEvent): Promise<boolean> {
+            if (DISABLE_MEEPS_POSTS) return false;
 
             const parsed = resolveMeepsUrl(
                 MEEPS_WEBHOOK_URL,
                 '/api/diana-events'
             );
-            if (!parsed) return;
+            if (!parsed) return false;
 
             if (!_meepsEventConfigLogged) {
                 _meepsEventConfigLogged = true;
@@ -72,20 +77,20 @@ export function createMeepsEventAdapter(): EventAdapter {
                         body,
                     });
 
-                    if (res.ok) return;
+                    if (res.ok) return true;
 
                     if (!isRetryableStatus(res.status)) {
                         console.warn(
                             `[Diana] Meeps event ${event.eventId} rejected (${res.status}, not retryable): ${await res.text()}`
                         );
-                        return;
+                        return false;
                     }
 
                     if (attempt === MAX_ATTEMPTS) {
                         console.warn(
                             `[Diana] Meeps event ${event.eventId} failed after ${MAX_ATTEMPTS} attempts (last status ${res.status}); dropping.`
                         );
-                        return;
+                        return false;
                     }
                 } catch (err) {
                     // Network-level failure - always transient enough to retry.
@@ -94,12 +99,15 @@ export function createMeepsEventAdapter(): EventAdapter {
                             `[Diana] Meeps event ${event.eventId} failed after ${MAX_ATTEMPTS} attempts:`,
                             err
                         );
-                        return;
+                        return false;
                     }
                 }
 
                 await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
             }
+
+            // Unreachable: the loop returns on every path at MAX_ATTEMPTS.
+            return false;
         },
     };
 }

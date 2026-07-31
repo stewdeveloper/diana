@@ -17,6 +17,9 @@ import {
     requireAuth,
     setPluginMessageAdapter,
     setPluginEventAdapter,
+    setEventAdapter,
+    registerCoreCron,
+    runRecapSweep,
     leagueBotPlugin,
     apexBotPlugin,
 } from 'diana-core';
@@ -32,6 +35,10 @@ import {
     createPathfinderPluginAdapter,
 } from './messageAdapter';
 import { createMeepsEventAdapter } from './meepsEventAdapter';
+
+/** Cron scope label and schedule for the session recap sweep. */
+const SESSION_RECAP_LABEL = 'session-recap';
+const SESSION_RECAP_CRON = '*/5 * * * *';
 
 // Rate limiter for dashboard routes (100 requests per minute per IP)
 const dashboardLimiter = rateLimit({
@@ -147,6 +154,11 @@ async function main() {
     // posts messages exclusively.
     setPluginEventAdapter(leagueBotPlugin.id, createMeepsEventAdapter());
 
+    // The same adapter again, as the fallback for emitters that are not a
+    // plugin. Session recaps are about a squad's evening, not about a game, so
+    // the sweep that emits them has no plugin id to look one up by.
+    setEventAdapter(createMeepsEventAdapter());
+
     registerSlashCommands([pingCommand, ...leagueDiscordCommands], 'diana');
     registerSlashCommands([...apexDiscordCommands], 'pathfinder');
 
@@ -155,6 +167,14 @@ async function main() {
 
     registerPlugin(apexBotPlugin);
     await loadPlugin(apexBotPlugin.id);
+
+    // Session Recap (roadmap §7.1). Five minutes is the resolution on "the night
+    // is over", which is already coarse: a recap cannot fire until a full idle
+    // gap has passed in silence, so the tick adds jitter to a 45-minute wait
+    // rather than being the wait itself. See recapSweep.ts.
+    registerCoreCron(SESSION_RECAP_LABEL, SESSION_RECAP_CRON, async () => {
+        await runRecapSweep(createMeepsEventAdapter());
+    });
 
     const repoRoot = path.resolve(__dirname, '..', '..', '..');
     const dashboardDir = path.join(repoRoot, 'dashboard', 'dist');

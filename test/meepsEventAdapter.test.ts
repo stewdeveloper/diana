@@ -154,13 +154,11 @@ describe('createMeepsEventAdapter', () => {
         expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
-    it('gives up after 3 attempts and does not throw', async () => {
+    it('gives up after 3 attempts, reporting failure rather than throwing', async () => {
         const fetchMock = mockFetchSequence(res(500), res(500), res(500));
         global.fetch = fetchMock as unknown as typeof fetch;
 
-        await expect(
-            loadAdapter(CONFIGURED).emit(EVENT)
-        ).resolves.toBeUndefined();
+        await expect(loadAdapter(CONFIGURED).emit(EVENT)).resolves.toBe(false);
 
         expect(fetchMock).toHaveBeenCalledTimes(3);
     });
@@ -169,7 +167,7 @@ describe('createMeepsEventAdapter', () => {
         const fetchMock = mockFetchSequence(res(400, 'bad event'));
         global.fetch = fetchMock as unknown as typeof fetch;
 
-        await loadAdapter(CONFIGURED).emit(EVENT);
+        await expect(loadAdapter(CONFIGURED).emit(EVENT)).resolves.toBe(false);
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
@@ -178,7 +176,7 @@ describe('createMeepsEventAdapter', () => {
         const fetchMock = mockFetchSequence(res(401, 'nope'));
         global.fetch = fetchMock as unknown as typeof fetch;
 
-        await loadAdapter(CONFIGURED).emit(EVENT);
+        await expect(loadAdapter(CONFIGURED).emit(EVENT)).resolves.toBe(false);
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
@@ -191,9 +189,25 @@ describe('createMeepsEventAdapter', () => {
         );
         global.fetch = fetchMock as unknown as typeof fetch;
 
-        await expect(
-            loadAdapter(CONFIGURED).emit(EVENT)
-        ).resolves.toBeUndefined();
+        await expect(loadAdapter(CONFIGURED).emit(EVENT)).resolves.toBe(false);
+    });
+
+    // The recap sweep records that a night has been announced, and only a
+    // truthy answer here entitles it to. A `true` for anything that did not
+    // reach Meeps would lose that recap permanently.
+    it('reports true only when Meeps accepted the event', async () => {
+        const fetchMock = mockFetchSequence(res(200));
+        global.fetch = fetchMock as unknown as typeof fetch;
+
+        await expect(loadAdapter(CONFIGURED).emit(EVENT)).resolves.toBe(true);
+    });
+
+    it('reports false when posting is disabled or unconfigured', async () => {
+        const fetchMock = mockFetchSequence(res(200));
+        global.fetch = fetchMock as unknown as typeof fetch;
+
+        await expect(loadAdapter({}).emit(EVENT)).resolves.toBe(false);
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it('accepts a bare public host and upgrades it to https', async () => {

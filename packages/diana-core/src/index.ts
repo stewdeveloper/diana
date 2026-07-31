@@ -11,6 +11,8 @@ export * from './core/presence/presenceService';
 export * from './core/presenceTypes';
 export * from './core/sessions/sessionise';
 export * from './core/sessions/sessionService';
+export * from './core/sessions/recapService';
+export * from './core/sessions/recapSweep';
 export * from './core/auth/authMiddleware';
 export * from './core/auth/authService';
 export * from './plugins/diana-league-bot';

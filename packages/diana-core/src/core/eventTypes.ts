@@ -25,7 +25,8 @@ export type DianaEventType =
     | 'streak'
     | 'milestone'
     | 'digest.weekly'
-    | 'rotation.weekly';
+    | 'rotation.weekly'
+    | 'session.completed';
 
 export interface DianaEventBase {
     /** Deterministic idempotency key. See the builders below. */
@@ -175,22 +176,146 @@ export interface RotationPostEvent extends DianaEventBase {
     championNames: string[];
 }
 
+/** One person's presence during a night. */
+export interface SessionParticipantSummary {
+    /**
+     * Meeps' own user id. Diana never learns a display name, and does not need
+     * one: Meeps resolves this against its own users when it renders the card.
+     * That is why the recap does not wait on DN-3.
+     */
+    meepsUserId: string;
+    /**
+     * Populated only where a presence event happened to carry it. Stays mostly
+     * null until DN-3 makes a Meeps user's Riot account authoritative, at which
+     * point this is what joins a participant to their games.
+     */
+    puuid: string | null;
+    firstJoinedAt: string;
+    /**
+     * Null means "never left", which on a completed session can only happen if
+     * presence was truncated. Consumers should treat it as "unknown", not "now".
+     */
+    lastLeftAt: string | null;
+    voiceSeconds: number;
+    /** Separate visits. "Left after game 5 and came back" needs more than one. */
+    intervalCount: number;
+}
+
+/** One game played during a night, in the order it was played. */
+export interface SessionMatchSummary {
+    matchId: string;
+    /** 1-based ordinal within the session: "you were 3-1 after game 5". */
+    gameIndex: number;
+    startedAt: string;
+    endedAt: string | null;
+    queueId: number | null;
+    /**
+     * Null when the squad's own players disagree - a custom or an Arena lobby
+     * with tracked players on both sides. Not a loss.
+     */
+    win: boolean | null;
+}
+
+/** The night's best individual performance. */
+export interface SessionStandout {
+    matchId: string;
+    gameIndex: number;
+    puuid: string;
+    /** Display name as rendered, e.g. "Player#EUW". */
+    summonerName: string;
+    /** Null when the match row did not yield one. */
+    championName: string | null;
+    aiScore: number;
+    /** 1-based rank within the lobby, when scoring produced one. */
+    placement: number | null;
+}
+
+/**
+ * The night's worst *game* - deliberately not its worst player.
+ *
+ * `WeeklyDigestStats` also has a `worstGame`, and it is a `WeeklyDigestAward`
+ * naming a person. This one names a match and carries no `name` at all. The
+ * asymmetry is intentional, so the shapes are made obviously different rather
+ * than subtly so.
+ *
+ * A digest ranks individuals across a week; being named is the point of a
+ * leaderboard. A session recap is one evening that five people had together and
+ * read together, and naming the worst player of the night to the people who were
+ * there every night is a meaner product than naming the game that went badly for
+ * everyone. Roadmap §8.1's ethic - banter between friends, a weapon between
+ * acquaintances - was written about the Session Curve and applies here too.
+ */
+export interface SessionLowPoint {
+    matchId: string;
+    gameIndex: number;
+    /** Mean AI score across the squad's players in that game. */
+    meanAiScore: number;
+}
+
+/**
+ * A night is over: everybody left voice and nobody came back.
+ *
+ * Emitted by the recap sweep once a session has settled, which is later than it
+ * ended - see `recapSweep.ts` for why silence can only be observed by a timer.
+ *
+ * Facts only. Meeps composes the sentence, so the wording of a recap can change
+ * without a Diana deploy.
+ */
+export interface SessionCompletedEvent extends DianaEventBase {
+    type: 'session.completed';
+    sessionId: string;
+    startedAt: string;
+    /** Never null: an unfinished night is not a completed session. */
+    endedAt: string;
+    /** Wall clock, `endedAt - startedAt`. "5 hrs 28 min" on the card. */
+    durationSeconds: number;
+    /**
+     * Summed across people, so three of them for two hours is 21600, not 7200.
+     * Carried alongside `durationSeconds` because it is a different number and
+     * neither is derivable from the other.
+     */
+    voiceSeconds: number;
+    participantCount: number;
+    /** Most people in voice at once - "five of you". */
+    peakConcurrent: number;
+    matchCount: number;
+    wins: number;
+    losses: number;
+    participants: SessionParticipantSummary[];
+    matches: SessionMatchSummary[];
+    /**
+     * Optional in the sense `WeeklyDigestStats` established: absent means "not
+     * awarded", never "unknown". A night with no scored games has neither.
+     */
+    bestGame?: SessionStandout;
+    worstGame?: SessionLowPoint;
+}
+
 export type DianaEvent =
     | MatchCompletedEvent
     | RankChangedEvent
     | StreakEvent
     | MilestoneEvent
     | WeeklyDigestEvent
-    | RotationPostEvent;
+    | RotationPostEvent
+    | SessionCompletedEvent;
 
 /**
  * Emits events to a downstream consumer (Meeps today).
  *
  * Implementations MUST NOT throw: a consumer being unreachable must never break
  * Discord posting. Swallow, log, and move on.
+ *
+ * RETURNS WHETHER THE EVENT WAS DELIVERED
+ * Most callers ignore this, and should: a match post is emitted once as a side
+ * effect of the poller, and there is nothing useful to do about a failure. The
+ * recap sweep is the exception - it records that a night has been announced, and
+ * recording that against an event that never arrived loses the recap silently
+ * and permanently. It marks only on `true`, and retries on the next tick
+ * otherwise, which is safe because the event id is deterministic.
  */
 export interface EventAdapter {
-    emit(event: DianaEvent): Promise<void>;
+    emit(event: DianaEvent): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +357,26 @@ export function buildPeriodicEventId(
     isoWeek: string
 ): string {
     return `${type}:${squadId}:${isoWeek}`;
+}
+
+/**
+ * One night, one recap.
+ *
+ * Keyed on `(squadId, startedAt)` and deliberately **not** on `session_id`: that
+ * column is `gen_random_uuid()`, which is exactly the random key the header of
+ * this file forbids. `(squad_id, started_at)` is already the `sessions` table's
+ * UNIQUE constraint, so it identifies the same night across every rebuild - and
+ * a rebuild is expected, because the table is derived.
+ *
+ * `startedAt` is normalised through `Date` rather than trusted as given. The
+ * driver may hand back a `Date` or a string depending on how it is configured,
+ * and two spellings of one instant would key one night as two.
+ */
+export function buildSessionEventId(
+    squadId: string,
+    startedAt: string | Date
+): string {
+    return `session.completed:${squadId}:${new Date(startedAt).toISOString()}`;
 }
 
 /**
