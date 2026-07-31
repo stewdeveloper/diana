@@ -17,6 +17,7 @@ export * from './core/squads/squadService';
 export * from './core/presence/presenceService';
 export * from './core/privacy/privacyService';
 export * from './core/identity/identityService';
+export * from './core/identity/linkSweep';
 export * from './core/presenceTypes';
 export * from './core/sessions/sessionise';
 export * from './core/sessions/sessionService';

@@ -24,6 +24,8 @@ import {
     setEventAdapter,
     registerCoreCron,
     runRecapSweep,
+    runLinkSweep,
+    createLolService,
     leagueBotPlugin,
     apexBotPlugin,
 } from 'diana-core';
@@ -33,6 +35,7 @@ import {
     setupAndStartDiscord,
     leagueDiscordCommands,
     apexDiscordCommands,
+    sendDirectMessage,
 } from 'diana-discord';
 import {
     createDianaPluginAdapter,
@@ -43,6 +46,16 @@ import { createMeepsEventAdapter } from './meepsEventAdapter';
 /** Cron scope label and schedule for the session recap sweep. */
 const SESSION_RECAP_LABEL = 'session-recap';
 const SESSION_RECAP_CRON = '*/5 * * * *';
+
+/**
+ * Link verification sweep (DN-3).
+ *
+ * Ten minutes rather than five: this is waiting on a third party's cache, and
+ * checking twice as often does not make Riot answer sooner - it only doubles
+ * the calls spent per person mid-link.
+ */
+const LINK_SWEEP_LABEL = 'link-verify';
+const LINK_SWEEP_CRON = '*/10 * * * *';
 
 // Rate limiter for dashboard routes (100 requests per minute per IP)
 const dashboardLimiter = rateLimit({
@@ -192,6 +205,34 @@ async function main() {
     // rather than being the wait itself. See recapSweep.ts.
     registerCoreCron(SESSION_RECAP_LABEL, SESSION_RECAP_CRON, async () => {
         await runRecapSweep(createMeepsEventAdapter());
+    });
+
+    // Link verification (DN-3). What the wait is actually for is Riot's
+    // summoner-v4 cache noticing an icon change, which takes longer than a
+    // person does and is not knowable in advance - so rather than asking the
+    // player to keep running `/link confirm` at it, Diana checks and tells them
+    // when it lands. See linkSweep.ts.
+    registerCoreCron(LINK_SWEEP_LABEL, LINK_SWEEP_CRON, async () => {
+        // `createLolService` throws when RIOT_API_KEY is unset. A deployment
+        // without one cannot verify anything, but it can still expire abandoned
+        // handshakes - so the sweep is handed null rather than the cron throwing
+        // every ten minutes forever.
+        let lolService = null;
+        try {
+            lolService = createLolService();
+        } catch {
+            // Logged by the sweep's own no-op path; nothing to add here.
+        }
+
+        await runLinkSweep(lolService, {
+            notify: async ({ discordUserId, gameName, tagLine }) => {
+                await sendDirectMessage(
+                    discordUserId,
+                    `**${gameName}#${tagLine}** is now linked to your Discord account — ` +
+                        'Riot finally caught up with the icon change. You can set your icon back whenever you like.'
+                );
+            },
+        });
     });
 
     const repoRoot = path.resolve(__dirname, '..', '..', '..');

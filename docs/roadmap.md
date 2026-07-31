@@ -560,17 +560,26 @@ Carried forward from the old roadmap. Still correct, and still the sharpest cons
 
 **The maths that still matters is for self-hosters on personal keys** (~50 calls/min sustained): the poller costs roughly **N calls/min** + **~3 per finished match** + **2N/day** metadata sync. A group tracking 5–15 summoners has comfortable headroom - and that headroom is the budget every rate-costing feature spends from.
 
-| Feature                                                                        | Riot calls                                                   |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------ |
-| **Every joint feature in §7 and §8.1/§8.3**                                    | **0** - entirely stored data                                 |
-| Session Recap, Session Curve, Squad Wrapped, Squad Draft, Calls                | **0**                                                        |
-| Shipped: richer embeds, MVP, leaderboards, digest, streaks, compare, sparkline | 0                                                            |
-| `/livegame` (basic, shipped)                                                   | 1 per use                                                    |
-| Free rotation (shipped)                                                        | 1 per week                                                   |
-| `/link` icon verification (DN-3)                                               | ~2 per link                                                  |
-| LCU presence (§8.2)                                                            | 0 - local client                                             |
-| Spectator polling fallback (§8.2)                                              | +N per tick - 1-min cadence **doubles** usage; 3-min is +33% |
-| Lobby scouting enrichment                                                      | up to ~10 per use - **production-key gated**                 |
+| Feature                                                                        | Riot calls                                                    |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| **Every joint feature in §7 and §8.1/§8.3**                                    | **0** - entirely stored data                                  |
+| Session Recap, Session Curve, Squad Wrapped, Squad Draft, Calls                | **0**                                                         |
+| Shipped: richer embeds, MVP, leaderboards, digest, streaks, compare, sparkline | 0                                                             |
+| `/livegame` (basic, shipped)                                                   | 1 per use                                                     |
+| Free rotation (shipped)                                                        | 1 per week                                                    |
+| `/link` icon verification (DN-3)                                               | ~2 per link, plus 1 per open handshake per 10 min - see below |
+| LCU presence (§8.2)                                                            | 0 - local client                                              |
+| Spectator polling fallback (§8.2)                                              | +N per tick - 1-min cadence **doubles** usage; 3-min is +33%  |
+| Lobby scouting enrichment                                                      | up to ~10 per use - **production-key gated**                  |
+
+> **The `/link` sweep, and why it costs more than the two calls above.** The
+> wait in the handshake is not the player's - it is summoner-v4's cache, which
+> reports an icon change reliably later than a person makes one and sometimes
+> much later. The original ten-minute window was sized for the person and so
+> expired before it could succeed. It is now 24 hours, and a sweep checks open
+> handshakes every ten minutes and DMs the player when one completes, because
+> the alternative is asking somebody to re-run `/link confirm` at an unknowable
+> moment. The ceiling is "people mid-link right now", one per Discord user.
 
 **That every differentiated feature is `Rate: zero` is a strategic fact, not a footnote.** The product's moat is built on data already in Postgres. Riot rate limits do not constrain the roadmap; they constrain only the live-presence layer, which has a local-client path that avoids them entirely.
 

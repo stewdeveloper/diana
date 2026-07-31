@@ -64,11 +64,27 @@ export interface LinkChallenge {
 /**
  * How long a handshake stays open.
  *
- * Ten minutes: long enough to alt-tab, find the icon in a client that is
- * probably mid-game, and come back; short enough that an abandoned challenge
- * does not sit around holding a claim on somebody else's account.
+ * **Twenty-four hours, and the old ten minutes was a bug.** The window was sized
+ * for how long a person takes to alt-tab and change an icon, which is the wrong
+ * quantity: what has to fit inside it is how long *Riot* takes to admit the icon
+ * changed. summoner-v4 serves cached data and that cache is not fast - reliably
+ * longer than ten minutes, sometimes much longer - so the handshake was expiring
+ * before it could possibly have succeeded, for everybody, every time.
+ *
+ * The original comment justified the short window as stopping an abandoned
+ * challenge "holding a claim on somebody else's account". That was wrong too: a
+ * challenge holds nothing. `identity_link_challenges` is keyed on
+ * `discord_user_id`, so two people can have an open challenge for the same
+ * puuid, and no link exists until one of them verifies.
+ *
+ * The real cost of a long window is coincidence: the longer it stays open, the
+ * more chance the account's owner independently sets the exact icon being asked
+ * for and hands an attacker a verification. With the current icon excluded that
+ * is one chance in twenty-eight *of the times they change it at all*, which is
+ * a price worth paying to make the feature work. RSO removes the question
+ * entirely and is still the real fix (roadmap gate 5).
  */
-export const CHALLENGE_TTL_MS = 10 * 60 * 1000;
+export const CHALLENGE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The icons a challenge may ask for.
@@ -359,6 +375,39 @@ export const createLinkChallenge = async (
         ]
     );
     return result.rows[0];
+};
+
+/**
+ * Every handshake still waiting, oldest first.
+ *
+ * For the sweep that finishes them. Expired rows are excluded here rather than
+ * deleted, unlike `getLinkChallenge` - the sweep runs over the whole table and
+ * deleting as a side effect of a read that happens every few minutes turns a
+ * clean-up into something that races with a player's own `/link confirm`.
+ */
+export const getPendingLinkChallenges = async (
+    now: number = Date.now()
+): Promise<LinkChallenge[]> => {
+    const result = await db.query(
+        `SELECT discord_user_id, puuid, game_name, tag_line, region,
+                required_icon, expires_at, created_at
+           FROM identity_link_challenges
+          WHERE expires_at > $1
+          ORDER BY created_at ASC`,
+        [new Date(now).toISOString()]
+    );
+    return result.rows;
+};
+
+/** Drop handshakes nobody finished. Called by the sweep, not by a read. */
+export const deleteExpiredLinkChallenges = async (
+    now: number = Date.now()
+): Promise<number> => {
+    const result = await db.query(
+        `DELETE FROM identity_link_challenges WHERE expires_at <= $1`,
+        [new Date(now).toISOString()]
+    );
+    return result.rowCount ?? 0;
 };
 
 /**
