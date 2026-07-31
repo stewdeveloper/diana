@@ -57,6 +57,34 @@ beforeEach(() => {
     queryMock.mockReset();
 });
 
+describe('CHALLENGE_ICON_IDS', () => {
+    it('only names icons every account can actually select', () => {
+        // The bug this pins: the set was 588-597, described in the source as
+        // "free starter icons every account owns". It was never checked and it
+        // is false — those are reward icons, so the handshake asked most
+        // players to set something they did not have, and failed for a reason
+        // they could neither see nor fix.
+        //
+        // 0-28 is the original launch set: on every account since the game
+        // shipped, and the range a new account's default icon comes from. There
+        // is no public endpoint for "which icons does this account own", so a
+        // set that needs no lookup is the only safe one.
+        for (const id of CHALLENGE_ICON_IDS) {
+            expect(id).toBeGreaterThanOrEqual(0);
+            expect(id).toBeLessThanOrEqual(28);
+        }
+    });
+
+    it('offers enough icons that a re-roll is worth suggesting', () => {
+        // `/link start` tells a player who cannot select the named icon to run
+        // it again. That advice is only honest if there is a real choice.
+        expect(CHALLENGE_ICON_IDS.length).toBeGreaterThan(5);
+        expect(new Set(CHALLENGE_ICON_IDS).size).toBe(
+            CHALLENGE_ICON_IDS.length
+        );
+    });
+});
+
 describe('chooseChallengeIcon', () => {
     it('never names the icon the player already has', () => {
         // The whole point of the handshake. An icon they already have would

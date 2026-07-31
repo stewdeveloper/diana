@@ -284,6 +284,15 @@ Four more things worth recording:
    `VERIFYING_METHODS` set.
 3. **The challenge icon excludes the one the player already has.** Otherwise
    roughly one handshake in ten "verifies" somebody who changed nothing.
+   **And it must be an icon they can actually select.** The first cut picked
+   from 588-597 and called them "starter icons every account owns" without
+   checking; they are reward icons, so the handshake asked most players for
+   something they did not have. Data Dragon lists all ~5000 regardless of
+   ownership and Riot exposes no "which icons does this account own" endpoint,
+   so the set is 0-28 — the original launch icons, on every account since the
+   game shipped. `/link` shows the **picture**, because the client's picker is a
+   grid of images and displays an id nowhere: naming "#596" asked for something
+   unlookupable.
 4. **It needed a new `ILolService` method.** summoner-v4 was not on the
    interface at all — `match_details.participants` carries a `profileIcon`, but
    that is the icon at match time, which cannot verify "change it now". Ships

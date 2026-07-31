@@ -1,10 +1,33 @@
 import {
+    buildProfileIconUrl,
+    FALLBACK_DDRAGON_VERSION,
     getQueueNameById,
     getRankTagsById,
     getRoleNameTranslation,
 } from '../packages/diana-core/src/plugins/diana-league-bot/api/utils/dataDragonService';
 
 // ─── Pure / synchronous helpers ───────────────────────────────────────────────
+
+describe('buildProfileIconUrl', () => {
+    it('points at the icon Data Dragon serves for that id', () => {
+        expect(buildProfileIconUrl(12, '15.2.1')).toBe(
+            'https://ddragon.leagueoflegends.com/cdn/15.2.1/img/profileicon/12.png'
+        );
+    });
+
+    it('falls back to the pinned version rather than emitting "undefined"', () => {
+        // A URL with `undefined` where the version goes renders as a broken
+        // image in the `/link` embed, which is the one place the picture *is*
+        // the instruction.
+        expect(buildProfileIconUrl(0)).toContain(FALLBACK_DDRAGON_VERSION);
+    });
+
+    it('handles icon 0, which is a real icon and not a missing one', () => {
+        expect(buildProfileIconUrl(0, '15.2.1')).toContain(
+            '/profileicon/0.png'
+        );
+    });
+});
 
 describe('getQueueNameById', () => {
     it('returns "Custom Game" for queue 0', () => {
