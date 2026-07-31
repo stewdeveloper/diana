@@ -130,6 +130,32 @@ describe('computePairings', () => {
         expect(pairs[0].puuids).toEqual(['a', 'b']);
     });
 
+    it('does not collide two pairs that a delimiter would merge', () => {
+        // The original key was the two puuids joined by a space, which CodeQL
+        // flagged: ("a b", "c") and ("a", "b c") both join to "a b c", so two
+        // different duos would share one tally and the card would name a pair
+        // that never played. Riot puuids do not contain spaces, but the tally
+        // must not depend on that.
+        const pairs = computePairings([
+            match('M1', [member('a b'), member('c')]),
+            match('M2', [member('a'), member('b c')]),
+        ]);
+
+        expect(pairs).toHaveLength(2);
+        for (const pair of pairs) {
+            expect(pair.gamesTogether).toBe(1);
+        }
+    });
+
+    it('recovers each pair intact, whatever is in the puuid', () => {
+        // The pair is carried as data rather than parsed back out of a key, so
+        // a puuid containing the old delimiter survives the round trip.
+        const pairs = computePairings([
+            match('M1', [member('x y z'), member('q')]),
+        ]);
+        expect(pairs[0].puuids).toEqual(['q', 'x y z']);
+    });
+
     it('is deterministic for identical figures', () => {
         // Two runs over the same night must produce the same card; a
         // redelivered card must not contradict the first one.
