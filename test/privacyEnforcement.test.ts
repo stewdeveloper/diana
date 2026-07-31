@@ -10,6 +10,17 @@ jest.mock(
 import { db } from '../packages/diana-core/src/plugins/diana-league-bot/api/utils/db';
 import { getInterCandidatesSince } from '../packages/diana-core/src/plugins/diana-league-bot/utils/interStats';
 import { computeStandouts } from '../packages/diana-core/src/core/sessions/recapService';
+import {
+    fetchSquadMatches,
+    fetchSquadScores,
+    fetchVoiceByPerson,
+} from '../packages/diana-core/src/core/wrapped/wrappedService';
+import {
+    computeChampionCounts,
+    computePlayerTotals,
+    computeSquadRecord,
+    pickTopDuo,
+} from '../packages/diana-core/src/core/wrapped/pairings';
 
 const queryMock = db.query as unknown as jest.Mock;
 
@@ -105,6 +116,81 @@ describe('privacy enforcement — where the filter reaches', () => {
         it('still does no work at all for a squad with no roster', async () => {
             await expect(computeStandouts('sess-1', [])).resolves.toEqual({});
             expect(queryMock).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('wrapped: a card the group posts in public', () => {
+        it('filters the scores it names a best game from', async () => {
+            await fetchSquadScores('sq1', 0, 1);
+            expect(filtersPrivacy(queryMock.mock.calls[0][0])).toBe(true);
+        });
+
+        it('does not drop the match itself when a participant is hidden', async () => {
+            // The roster read is the one whose *count* has to survive a hidden
+            // player: dropping the match would make the headline figure wrong.
+            // The member is filtered in TypeScript instead - before any ranking,
+            // which is the property that matters.
+            await fetchSquadMatches(['p1'], 0, 1);
+            expect(filtersPrivacy(queryMock.mock.calls[0][0])).toBe(false);
+        });
+
+        it('excludes a hidden player from every surface that names one', async () => {
+            const matches = [
+                {
+                    matchId: 'M1',
+                    playedAt: 1,
+                    members: [
+                        {
+                            puuid: 'p1',
+                            win: true,
+                            teamId: 100,
+                            championName: 'Lux',
+                            kills: 1,
+                            deaths: 1,
+                            assists: 1,
+                        },
+                        {
+                            puuid: 'hidden',
+                            win: true,
+                            teamId: 100,
+                            championName: 'Yasuo',
+                            kills: 1,
+                            deaths: 1,
+                            assists: 1,
+                        },
+                    ],
+                },
+            ];
+            const hiddenPuuids = new Set(['hidden']);
+
+            // Named surfaces: the roster board, the duo line, the champion line.
+            expect(
+                computePlayerTotals(matches, { hiddenPuuids }).map(
+                    (t) => t.puuid
+                )
+            ).toEqual(['p1']);
+            expect(pickTopDuo(matches, { hiddenPuuids })).toBeNull();
+            expect(
+                computeChampionCounts(matches, hiddenPuuids).map(
+                    (c) => c.championName
+                )
+            ).toEqual(['Lux']);
+
+            // Counted, not named: the match still happened.
+            expect(computeSquadRecord(matches).totalGames).toBe(1);
+        });
+
+        it('filters voice time through identity, since it is keyed on a Meeps user', async () => {
+            // Privacy is keyed on the puuid so that nobody has to identify
+            // themselves to become invisible; voice is keyed on meeps_user_id so
+            // that the friend who never plays is still counted. identity_accounts
+            // is the only thing that joins them.
+            await fetchVoiceByPerson('sq1', 'a', 'b');
+            const sql = flat(queryMock.mock.calls[0][0]);
+            expect(sql).toContain('FROM identity_accounts me');
+            expect(sql).toContain(`riot."kind" = 'riot_puuid'`);
+            expect(sql).toContain('summoner_privacy sp2');
+            expect(sql).toContain(`me."kind" = 'meeps_user'`);
         });
     });
 });

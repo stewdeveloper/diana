@@ -46,6 +46,38 @@ export const notHiddenPredicate = (puuidColumn: string): string =>
     )`;
 
 /**
+ * The same rule, for a surface keyed on a Meeps user rather than on a puuid.
+ *
+ * Privacy is keyed on the puuid, deliberately - you must not have to identify
+ * yourself in order to become invisible (DN-3, roadmap §6.1). But voice time is
+ * keyed on `meeps_user_id`, because `session_participants` has to hold the
+ * friend who was in the call all night without playing. So a surface that ranks
+ * people by voice hours has a puuid-shaped rule and a Meeps-shaped column, and
+ * the only thing that joins them is `identity_accounts`.
+ *
+ * This is the first internal reader of that table, and the join is what makes
+ * "hide me" mean the same thing on a voice leaderboard as on a League one. A
+ * Meeps user with no linked Riot account matches nothing and stays visible,
+ * which is correct: they never opted out of anything.
+ *
+ * As with `notHiddenPredicate`, the parameter is a column name interpolated by
+ * the caller - a literal like `sp."meeps_user_id"`, never user input.
+ */
+export const notHiddenMeepsUserPredicate = (userColumn: string): string =>
+    `NOT EXISTS (
+        SELECT 1
+          FROM identity_accounts me
+          JOIN identity_accounts riot
+            ON riot."identity_id" = me."identity_id"
+           AND riot."kind" = 'riot_puuid'
+          JOIN summoner_privacy sp2
+            ON sp2."puuid" = riot."external_id"
+           AND sp2."hidden" = TRUE
+         WHERE me."kind" = 'meeps_user'
+           AND me."external_id" = ${userColumn}
+    )`;
+
+/**
  * Whether this player has opted out.
  *
  * A missing row means visible. So does `hidden = false`; the row survives

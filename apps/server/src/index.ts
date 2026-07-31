@@ -11,6 +11,8 @@ import {
     pluginsApiRouter,
     squadsApiRouter,
     squadsMachineRouter,
+    wrappedApiRouter,
+    wrappedMachineRouter,
     presenceApiRouter,
     privacyApiRouter,
     identityApiRouter,
@@ -139,7 +141,13 @@ async function main() {
     // `meepsSecretOrSkip`. Order matters; swapping these two makes the machine
     // route unreachable again.
     app.use('/api/squads', squadsMachineRouter);
+    // Squad Wrapped (§7.2) is the second machine-readable squad route, and for
+    // the same reason: Meeps draws the card, joining these figures to the chat
+    // corpus that only it has. Same fall-through, so the dashboard reaches the
+    // identical handler through the JWT router further down.
+    app.use('/api/squads', wrappedMachineRouter);
     app.use('/api/squads', requireAuth, squadsApiRouter);
+    app.use('/api/squads', requireAuth, wrappedApiRouter);
     // Sessions (DN-6) sit behind the dashboard JWT, not the Meeps secret: a
     // session records who was at their computer and with whom, which is personal
     // data about a group rather than a machine-to-machine fact.
