@@ -120,10 +120,53 @@ export interface MilestoneEvent extends DianaEventBase {
     rankAfter: string;
 }
 
+/** One named player and the number that earned them the slot. */
+export interface WeeklyDigestAward {
+    /** Display name as rendered, e.g. "Player#EUW". */
+    name: string;
+    /**
+     * The award's figure, in the unit its slot implies: LP for climber and
+     * faller (signed), games for the grinder, AI score for the rest. Rounded to
+     * the value Discord shows, so both renderings agree.
+     */
+    value: number;
+}
+
+/**
+ * The digest as numbers rather than as an embed.
+ *
+ * The Discord post has always computed these and then flattened them into
+ * markdown strings ("🧗 **Climber of the Week**" / "Player#EUW (**+42 LP**)"),
+ * which is unparseable by anything downstream. Carrying the same figures
+ * structurally is what lets Meeps draw its own digest card — the point of the
+ * event contract is that a consumer receives data and decides how to show it.
+ *
+ * Every award is optional and for the same reason it is optional in the embed:
+ * a week with no ranked movement has no climber, and a week where nothing was
+ * scored has no MVP. Absent means "not awarded this week", never "unknown".
+ */
+export interface WeeklyDigestStats {
+    totalGames: number;
+    playerCount: number;
+    climber?: WeeklyDigestAward;
+    faller?: WeeklyDigestAward;
+    grinder?: WeeklyDigestAward;
+    mvp?: WeeklyDigestAward;
+    inter?: WeeklyDigestAward;
+    bestGame?: WeeklyDigestAward;
+    worstGame?: WeeklyDigestAward;
+}
+
 export interface WeeklyDigestEvent extends DianaEventBase {
     type: 'digest.weekly';
     /** ISO year-week the digest covers, e.g. "2026-W30". */
     isoWeek: string;
+    /**
+     * Optional because events emitted before this field existed have none, and
+     * consumers read historical rows. A card with no `stats` should degrade to
+     * the week label rather than fail.
+     */
+    stats?: WeeklyDigestStats;
 }
 
 export interface RotationPostEvent extends DianaEventBase {
