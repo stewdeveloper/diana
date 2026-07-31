@@ -231,10 +231,10 @@ Scheduled in R3 rather than R1 because it is not a blocker on charging money - b
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | ✅ **MP-1** | **Spaces** - real multi-tenancy: `spaces`, `channels`, `memberships`, invite links; delete the hardcoded channel constants | **L**  | Two independent squads coexist on one deployment with zero data bleed; channels created/renamed/deleted at runtime; invite flow works end to end. **Highest-priority item in the programme** |
 | ✅ **MP-2** | Roles & moderation basics - owner/admin/member, kick, ban, channel permissions                                             | M      | Owner can kick/ban; non-admins cannot alter space config; enforced server-side, not just in the UI                                                                                           |
-| ⬜ **MP-4** | Self-serve onboarding - hosted signup, no `.env`, no VAPID generation, no migration step                                   | M      | A non-technical buyer goes from landing page to talking in voice with a friend in under 10 minutes                                                                                           |
-| ⬜ **MP-8** | Bridge productisation - guided setup flow replacing `DISCORD_CHANNEL_MAP` env parsing                                      | M      | Channel mapping, identity linking and backfill all self-serve through the UI                                                                                                                 |
-| ⬜ **MP-7** | Consent & data surface - per-user opt-in, visible, revocable, exportable; per-space export and delete                      | S–M    | Every user can see, revoke and export what is collected about them; activity logging and voice analytics both default **off**                                                                |
-| ⬜ **MP-5** | macOS build (+ Linux)                                                                                                      | S–M    | Signed, notarised, auto-updating. One Mac user currently blocks a whole group's adoption                                                                                                     |
+| ✅ **MP-4** | Self-serve onboarding - hosted signup, no `.env`, no VAPID generation, no migration step                                   | M      | **Shipped** as Meeps MP-04 (username/password sign-in, space picker, first-run wizard)                                                                                                       |
+| ✅ **MP-8** | Bridge productisation - guided setup flow replacing `DISCORD_CHANNEL_MAP` env parsing                                      | M      | **Shipped** as Meeps MP-08 - a Discord channel is bridged from Space settings, not an env var                                                                                                |
+| ✅ **MP-7** | Consent & data surface - per-user opt-in, visible, revocable, exportable; per-space export and delete                      | S–M    | **Shipped** as Meeps MP-13 - asks before collecting anything and shows what is collected                                                                                                     |
+| ⬜ **MP-5** | macOS build (+ Linux)                                                                                                      | S–M    | Signed, notarised, auto-updating. One Mac user currently blocks a whole group's adoption. Tracked as Meeps MP-12, still open and still dependency-free                                       |
 
 ### Joint
 
@@ -254,8 +254,14 @@ Scheduled in R3 rather than R1 because it is not a blocker on charging money - b
 | ----------- | ------------------------------------------------------------------------------ | --------- | ------ | ---- |
 | ✅ **DN-5** | Presence ingestion - accept `voice.*` and `client.*` events from Meeps         | `[Diana]` | S      | zero |
 | ✅ **DN-6** | Session service - sessionise matches + voice presence into a `sessions` table  | `[Diana]` | M      | zero |
-| ⬜ **MP-6** | Native event rendering - match cards, LP graphs, recap cards as first-class UI | `[Meeps]` | M      | -    |
-| ⬜ **MP-3** | SFU voice (LiveKit or mediasoup) replacing mesh                                | `[Meeps]` | M–L    | -    |
+| 🔨 **MP-6** | Native event rendering - match cards, LP graphs, recap cards as first-class UI | `[Meeps]` | M      | -    |
+| ✅ **MP-3** | SFU voice (LiveKit or mediasoup) replacing mesh                                | `[Meeps]` | M–L    | -    |
+
+> **MP-6 is half done.** Meeps' MP-10 shipped the `diana_events` read path - a
+> query API, WebSocket fan-out and the `spaces.squad_id` authorisation join - so
+> the events Diana had been writing since DN-1 are finally readable. What remains
+> is the rendering itself. Diana's side of Session Recap (§7.1) emits into that
+> read path; the card is drawn on the Meeps side.
 
 > **The presence path, as built.** DN-5 and Meeps' MP-07 were each shipped and
 > never connected — Meeps recorded voice intervals locally and nothing sent them,
@@ -289,6 +295,33 @@ Scheduled in R3 rather than R1 because it is not a blocker on charging money - b
 **Why nobody can copy it.** Requires voice presence timestamps joined to match outcomes. Trackimo has no voice. Discord bots can read voice-state events but have no match pipeline. Companion apps have no concept of a group.
 
 **Needs:** DN-1, DN-5, DN-6, MP-6 · **Effort:** M · **Rate:** zero (entirely stored data)
+
+> **🔨 Diana's half is built.** Migration 017 adds `sessions.recap_emitted_at`; a
+> core cron sweeps every five minutes, closes settled nights and emits
+> `session.completed` carrying the figures - participants by Meeps user id,
+> games in play order, best game and worst game. Meeps draws the card (MP-6).
+>
+> **Three corrections to the example line above, from building it.**
+>
+> 1. **"Longest voice silence" is not computable and has been dropped.** Meeps
+>    sends `voice.joined` and `voice.left`; presence is not speech. Five people
+>    sitting silently in a channel are indistinguishable from five people talking,
+>    so any figure here would be invented. It returns if Meeps ever sends
+>    voice-activity data.
+> 2. **"Louis left after game 5" does not need DN-3.** `session_participants` is
+>    keyed on `meeps_user_id` and Meeps knows its own display names, so the event
+>    carries the id and Meeps resolves it. Identity blocks only the
+>    _cross-reference_ - knowing the person who left is the person who played
+>    Warwick. §5.3 and Meeps' own §3 both overstate this dependency.
+> 3. **"Worst: everyone's, game 6" is load-bearing, not a turn of phrase.** The
+>    worst game is the lowest _mean_ squad score, so it names a game and not a
+>    player. `digest.weekly`'s `worstGame` names a person, deliberately and for a
+>    different reason - see `SessionLowPoint` in `eventTypes.ts`.
+>
+> **The recap lands 45-50 minutes after the last person leaves**, not instantly.
+> A night is only over once the idle gap has passed in silence, and silence is
+> not an event anything can listen for - so the trigger is a sweep, and the wait
+> is the gap rather than the cadence.
 
 ### 7.2 Squad Wrapped
 
@@ -481,12 +514,12 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 | --------- | ------------------------------------ | --------------------------------------------------- |
 | MP-1      | Spaces multi-tenancy                 | ✅ **Shipped** - §6 R1                              |
 | MP-2      | Roles & moderation                   | ✅ **Shipped** - §6 R1                              |
-| MP-3      | SFU voice                            | §7 R2                                               |
-| MP-4      | Self-serve onboarding                | §6 R1                                               |
-| MP-5      | macOS build                          | §6 R1                                               |
-| MP-6      | Native event rendering               | §7 R2                                               |
-| MP-7      | Consent & data surface               | §6 R1                                               |
-| MP-8      | Bridge productisation                | §6 R1                                               |
+| MP-3      | SFU voice                            | ✅ **Shipped** - §7 R2                              |
+| MP-4      | Self-serve onboarding                | ✅ **Shipped** - §6 R1                              |
+| MP-5      | macOS build                          | §6 R1 (Meeps MP-12)                                 |
+| MP-6      | Native event rendering               | 🔨 read path shipped (MP-10) - §7 R2                |
+| MP-7      | Consent & data surface               | ✅ **Shipped** - §6 R1 (Meeps MP-13)                |
+| MP-8      | Bridge productisation                | ✅ **Shipped** - §6 R1                              |
 | MP-9      | Typed backend + coverage             | §8.6 R3                                             |
 | DN-1      | Typed event bus                      | ✅ **Shipped** - §5.1, §6 R1                        |
 | DN-2      | `squad_id` scope                     | ✅ **Shipped** - §5.2, §6 R1                        |
@@ -498,7 +531,7 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 | DN-8      | Riot compliance package              | §6 R1, **week 1**                                   |
 | DN-9      | Old roadmap Phase 0                  | ✅ **Shipped** - §3.1                               |
 | ~~DN-10~~ | ~~Migration tooling~~                | **Dropped** — versions table already exists; see §6 |
-| 6.3.1     | Session Recap                        | §7.1                                                |
+| 6.3.1     | Session Recap                        | 🔨 Diana's half shipped - §7.1                      |
 | 6.3.2     | Session Curve                        | §8.1                                                |
 | 6.3.3     | LCU presence & champ select          | §8.2                                                |
 | 6.3.4     | Squad Draft                          | §8.3                                                |
@@ -534,7 +567,7 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 - **R1** `[Diana]`: `squads` + squad attachments (guild ⇄ space) — ✅ `014_squads.sql`; `identities` + `riot_account_links` and per-player privacy flags — DN-3, outstanding.
 - **R1** `[Meeps]`: `030_diana_events.sql` — the event log, `event_id` as primary key for idempotency. ✅ shipped (it landed as 030, not 029).
 - **R1** `[Meeps]`: `spaces`, `channels`, `memberships`, invite links — ✅ `032_spaces.sql`, `033_messages_channel_id_backfill.sql`; roles/permissions — ✅ `035_space_bans.sql`; consent + export records — MP-7, outstanding.
-- **R2** `[Diana]`: voice presence — ✅ `015_presence.sql` (`presence_events`, `presence_consent`); `sessions`, `session_participants`, `session_matches` — ✅ `016_sessions.sql` (DN-6, derived and rebuildable).
+- **R2** `[Diana]`: voice presence — ✅ `015_presence.sql` (`presence_events`, `presence_consent`); `sessions`, `session_participants`, `session_matches` — ✅ `016_sessions.sql` (DN-6, derived and rebuildable); `sessions.recap_emitted_at` — ✅ `017_session_recaps.sql` (§7.1, delivery bookkeeping rather than derived state).
 - **R2** `[Meeps]`: durable voice intervals — ✅ `031_voice_presence.sql` (MP-07); `users.public_id` + presence delivery tracking — ✅ `037_presence_outbox.sql`.
 - **R3**: live-game dedup state (**separate from `summoners.currentMatchId`**); Calls windows + accuracy stats; plugin config tables; `diana-builds` tables migrated from Meeps.
 

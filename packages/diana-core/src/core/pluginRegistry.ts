@@ -90,6 +90,66 @@ export function setPluginEventAdapter(
     pluginEventAdapters.set(pluginId, adapter);
 }
 
+/**
+ * Schedule a handler with the in-flight guard from #119.
+ *
+ * Extracted from `createContext` so core services can be scheduled on the same
+ * terms as plugins without the guard being written twice. `scope` is a plugin id
+ * for plugin crons and a plain label for core ones; it only reaches the log.
+ */
+function scheduleGuardedCron(
+    scope: string,
+    schedule: string,
+    handler: () => Promise<void>
+): () => void {
+    logPlugin('info', scope, `Registering cron job with schedule: ${schedule}`);
+    const cron = require('node-cron') as typeof import('node-cron');
+    // In-flight guard: if a tick is still running when the next one
+    // fires, skip the new tick instead of running them concurrently.
+    let running = false;
+    const job = cron.schedule(schedule, () => {
+        if (running) {
+            logPlugin(
+                'warn',
+                scope,
+                `Cron tick skipped (previous tick still running) for schedule: ${schedule}`
+            );
+            return;
+        }
+        running = true;
+        handler()
+            .catch((error) => {
+                logPlugin('error', scope, `Cron tick failed: ${error}`);
+            })
+            .finally(() => {
+                running = false;
+            });
+    });
+    return () => {
+        job.stop();
+    };
+}
+
+/**
+ * Schedule a cron that belongs to core rather than to a plugin.
+ *
+ * The recap sweep is the first of these and the reason this exists. Sessions are
+ * squad-scoped and deliberately game-agnostic - roadmap §10 asks that recaps and
+ * Wrapped be built on the event schema rather than on League specifics - so
+ * hanging the sweep off the League plugin would make an Apex-only squad
+ * structurally incapable of having nights.
+ *
+ * Unlike a plugin cron this is not registered for teardown on plugin unload,
+ * because core does not unload. The returned cleanup is for tests.
+ */
+export function registerCoreCron(
+    label: string,
+    schedule: string,
+    handler: () => Promise<void>
+): () => void {
+    return scheduleGuardedCron(`core:${label}`, schedule, handler);
+}
+
 function createContext(pluginId: string): PluginContext {
     return {
         mountRouter(path: string, router: Router) {
@@ -117,40 +177,7 @@ function createContext(pluginId: string): PluginContext {
             schedule: string,
             handler: () => Promise<void>
         ): () => void {
-            logPlugin(
-                'info',
-                pluginId,
-                `Registering cron job with schedule: ${schedule}`
-            );
-            const cron = require('node-cron') as typeof import('node-cron');
-            // In-flight guard: if a tick is still running when the next one
-            // fires, skip the new tick instead of running them concurrently.
-            let running = false;
-            const job = cron.schedule(schedule, () => {
-                if (running) {
-                    logPlugin(
-                        'warn',
-                        pluginId,
-                        `Cron tick skipped (previous tick still running) for schedule: ${schedule}`
-                    );
-                    return;
-                }
-                running = true;
-                handler()
-                    .catch((error) => {
-                        logPlugin(
-                            'error',
-                            pluginId,
-                            `Cron tick failed: ${error}`
-                        );
-                    })
-                    .finally(() => {
-                        running = false;
-                    });
-            });
-            const cleanup = () => {
-                job.stop();
-            };
+            const cleanup = scheduleGuardedCron(pluginId, schedule, handler);
             const loaded = loadedPlugins.get(pluginId);
             if (loaded) {
                 loaded.cronCleanups.push(cleanup);

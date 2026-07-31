@@ -1,6 +1,7 @@
 import {
     buildMatchScopedEventId,
     buildPeriodicEventId,
+    buildSessionEventId,
     toIsoWeek,
 } from '../packages/diana-core/src/core/eventTypes';
 
@@ -181,5 +182,51 @@ describe('toIsoWeek', () => {
         const before = d.getTime();
         toIsoWeek(d);
         expect(d.getTime()).toBe(before);
+    });
+});
+
+describe('buildSessionEventId', () => {
+    const SQUAD = 'squad-1';
+    const START = '2026-07-28T20:12:00.000Z';
+
+    it('is stable for the same night', () => {
+        expect(buildSessionEventId(SQUAD, START)).toBe(
+            buildSessionEventId(SQUAD, START)
+        );
+    });
+
+    // `sessions.session_id` is gen_random_uuid(), which is exactly the random
+    // key this file forbids. (squad_id, started_at) is the table's own UNIQUE
+    // constraint, so it survives the rebuilds a derived table expects.
+    it('is keyed on the squad and the start instant', () => {
+        expect(buildSessionEventId(SQUAD, START)).toBe(
+            `session.completed:${SQUAD}:${START}`
+        );
+    });
+
+    it('separates two squads whose nights began at the same moment', () => {
+        expect(buildSessionEventId('squad-a', START)).not.toBe(
+            buildSessionEventId('squad-b', START)
+        );
+    });
+
+    it('separates two nights of the same squad', () => {
+        expect(buildSessionEventId(SQUAD, START)).not.toBe(
+            buildSessionEventId(SQUAD, '2026-07-29T20:12:00.000Z')
+        );
+    });
+
+    // The driver may hand back TIMESTAMPTZ as a Date or as a string. Two
+    // spellings of one instant would announce one night twice.
+    it('normalises a Date and a string to the same key', () => {
+        expect(buildSessionEventId(SQUAD, new Date(START))).toBe(
+            buildSessionEventId(SQUAD, START)
+        );
+    });
+
+    it('normalises a non-UTC spelling of the same instant', () => {
+        expect(
+            buildSessionEventId(SQUAD, '2026-07-28T21:12:00.000+01:00')
+        ).toBe(buildSessionEventId(SQUAD, START));
     });
 });

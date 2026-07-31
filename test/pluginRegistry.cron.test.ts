@@ -17,6 +17,7 @@ import {
     registerPlugin,
     loadPlugin,
     enablePlugin,
+    registerCoreCron,
 } from '../packages/diana-core/src/core/pluginRegistry';
 import type {
     DianaPlugin,
@@ -147,5 +148,83 @@ describe('registerCron overlap guard', () => {
 
         slowGate.resolve();
         await flushPromises();
+    });
+});
+
+// The recap sweep is squad-scoped and game-agnostic, so it has no plugin to
+// hang off - but it needs the same guard for the same reason the poller did.
+// The scheduler is shared rather than written twice; these assert that.
+describe('registerCoreCron', () => {
+    const ticks: Array<() => void> = [];
+
+    beforeEach(() => {
+        ticks.length = 0;
+        scheduleMock.mockReset();
+        scheduleMock.mockImplementation((_schedule: string, fn: () => void) => {
+            ticks.push(fn);
+            return { stop: jest.fn() };
+        });
+        jest.spyOn(console, 'log').mockImplementation(() => undefined);
+        jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => jest.restoreAllMocks());
+
+    it('schedules on the given expression', () => {
+        registerCoreCron('session-recap', '*/5 * * * *', async () => {});
+
+        expect(scheduleMock).toHaveBeenCalledWith(
+            '*/5 * * * *',
+            expect.any(Function)
+        );
+    });
+
+    it('skips a tick while the previous one is still running', async () => {
+        const gate = deferred();
+        const handler = jest.fn(() => gate.promise);
+
+        registerCoreCron('session-recap', '*/5 * * * *', handler);
+
+        ticks[0]();
+        await flushPromises();
+        ticks[0]();
+        await flushPromises();
+
+        expect(handler).toHaveBeenCalledTimes(1);
+
+        gate.resolve();
+        await flushPromises();
+
+        ticks[0]();
+        await flushPromises();
+        expect(handler).toHaveBeenCalledTimes(2);
+    });
+
+    // A sweep that throws must not wedge the guard closed, or recaps stop
+    // for the lifetime of the process.
+    it('clears the guard when a tick fails', async () => {
+        const handler = jest
+            .fn()
+            .mockRejectedValueOnce(new Error('db down'))
+            .mockResolvedValueOnce(undefined);
+
+        registerCoreCron('session-recap', '*/5 * * * *', handler);
+
+        ticks[0]();
+        await flushPromises();
+        ticks[0]();
+        await flushPromises();
+
+        expect(handler).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns a cleanup that stops the job', () => {
+        const stop = jest.fn();
+        scheduleMock.mockReturnValue({ stop });
+
+        registerCoreCron('session-recap', '*/5 * * * *', async () => {})();
+
+        expect(stop).toHaveBeenCalled();
     });
 });
