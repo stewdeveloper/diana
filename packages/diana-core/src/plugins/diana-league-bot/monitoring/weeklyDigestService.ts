@@ -1,5 +1,5 @@
 import { db } from '../api/utils/db';
-import type { EventAdapter } from '../../../core/eventTypes';
+import type { EventAdapter, WeeklyDigestStats } from '../../../core/eventTypes';
 import { buildPeriodicEventId, toIsoWeek } from '../../../core/eventTypes';
 import {
     getAllGuildConfigs,
@@ -103,12 +103,17 @@ async function computeWeeklyLpDeltas(
 }
 
 /**
- * Build the weekly digest payload for one guild, or null when the guild had
- * no tracked matches this week (no post is sent in that case).
+ * Compute the week's figures for one guild, or null when the guild had no
+ * tracked matches this week (no post is sent in that case).
+ *
+ * Split out from the embed builder so the Discord post and the `digest.weekly`
+ * event are two renderings of one computation rather than two computations that
+ * have to be kept in step. The embed reduces these to markdown; the event
+ * carries them as they are.
  */
-export async function buildWeeklyDigestPayload(
+export async function computeWeeklyDigestStats(
     guildId: string
-): Promise<MessagePayload | null> {
+): Promise<WeeklyDigestStats | null> {
     const sinceTimestamp = Date.now() - ONE_WEEK_IN_MS;
     const scope = await getGuildCompetitiveScope(guildId);
     // The roster is the squad's; the competitive scope above is this Discord
@@ -122,8 +127,10 @@ export async function buildWeeklyDigestPayload(
     });
     if (candidates.length === 0) return null;
 
-    const totalGames = candidates.reduce((sum, c) => sum + c.matchesPlayed, 0);
-    const fields: Array<{ name: string; value: string; inline?: boolean }> = [];
+    const stats: WeeklyDigestStats = {
+        totalGames: candidates.reduce((sum, c) => sum + c.matchesPlayed, 0),
+        playerCount: candidates.length,
+    };
 
     const deltas = await computeWeeklyLpDeltas(
         candidates,
@@ -132,30 +139,26 @@ export async function buildWeeklyDigestPayload(
     if (deltas.length > 0) {
         const climber = deltas.reduce((a, b) => (b.delta > a.delta ? b : a));
         const faller = deltas.reduce((a, b) => (b.delta < a.delta ? b : a));
+        // A week where everyone lost LP has no climber, and vice versa. The
+        // sign test is what makes the award mean something.
         if (climber.delta > 0) {
-            fields.push({
-                name: '🧗 **Climber of the Week**',
-                value: `${climber.candidate.displayName} (**+${climber.delta} LP**)`,
-                inline: true,
-            });
+            stats.climber = {
+                name: climber.candidate.displayName,
+                value: climber.delta,
+            };
         }
         if (faller.delta < 0) {
-            fields.push({
-                name: '📉 **Faller of the Week**',
-                value: `${faller.candidate.displayName} (**${faller.delta} LP**)`,
-                inline: true,
-            });
+            stats.faller = {
+                name: faller.candidate.displayName,
+                value: faller.delta,
+            };
         }
     }
 
     const grinder = [...candidates].sort(
         (a, b) => b.matchesPlayed - a.matchesPlayed
     )[0];
-    fields.push({
-        name: '🎮 **The Grinder**',
-        value: `${grinder.displayName} (**${grinder.matchesPlayed} game${grinder.matchesPlayed === 1 ? '' : 's'}**)`,
-        inline: true,
-    });
+    stats.grinder = { name: grinder.displayName, value: grinder.matchesPlayed };
 
     const scored = candidates.filter((c) => c.scoredMatchesCount > 0);
     if (scored.length > 0) {
@@ -163,16 +166,16 @@ export async function buildWeeklyDigestPayload(
         const inter = [...scored].sort(
             (a, b) => a.avgAiScore - b.avgAiScore
         )[0];
-        fields.push({
-            name: '🏆 **MVP of the Week**',
-            value: `${mvp.displayName} (avg AI score **${Math.round(mvp.avgAiScore)}**)`,
-            inline: true,
-        });
-        fields.push({
-            name: '🤡 **Inter of the Week**',
-            value: `${inter.displayName} (avg AI score **${Math.round(inter.avgAiScore)}**)`,
-            inline: true,
-        });
+        // Rounded here rather than at each render, so the number Meeps shows is
+        // the number Discord showed.
+        stats.mvp = {
+            name: mvp.displayName,
+            value: Math.round(mvp.avgAiScore),
+        };
+        stats.inter = {
+            name: inter.displayName,
+            value: Math.round(inter.avgAiScore),
+        };
     }
 
     try {
@@ -184,17 +187,17 @@ export async function buildWeeklyDigestPayload(
         if (scoredGames.length > 0) {
             const best = scoredGames[0];
             const worst = scoredGames[scoredGames.length - 1];
-            fields.push({
-                name: '⭐ **Best Single Game**',
-                value: `${displayName(best.gameName, best.tagLine)} (AI score **${Math.round(Number(best.score))}**)`,
-                inline: true,
-            });
+            stats.bestGame = {
+                name: displayName(best.gameName, best.tagLine),
+                value: Math.round(Number(best.score)),
+            };
+            // One scored game in the week is both the best and the worst; only
+            // the distinct case earns a second award.
             if (worst.matchId !== best.matchId || worst.puuid !== best.puuid) {
-                fields.push({
-                    name: '💩 **Worst Single Game**',
-                    value: `${displayName(worst.gameName, worst.tagLine)} (AI score **${Math.round(Number(worst.score))}**)`,
-                    inline: true,
-                });
+                stats.worstGame = {
+                    name: displayName(worst.gameName, worst.tagLine),
+                    value: Math.round(Number(worst.score)),
+                };
             }
         }
     } catch (error) {
@@ -204,14 +207,88 @@ export async function buildWeeklyDigestPayload(
         );
     }
 
+    return stats;
+}
+
+/**
+ * Render the week's figures as the Discord embed. Field order and wording are
+ * unchanged from when this lived inside the computation — `discordPayloadRegression`
+ * pins the output.
+ */
+export function buildWeeklyDigestPayloadFromStats(
+    stats: WeeklyDigestStats
+): MessagePayload {
+    const fields: Array<{ name: string; value: string; inline?: boolean }> = [];
+
+    if (stats.climber) {
+        fields.push({
+            name: '🧗 **Climber of the Week**',
+            value: `${stats.climber.name} (**+${stats.climber.value} LP**)`,
+            inline: true,
+        });
+    }
+    if (stats.faller) {
+        fields.push({
+            name: '📉 **Faller of the Week**',
+            value: `${stats.faller.name} (**${stats.faller.value} LP**)`,
+            inline: true,
+        });
+    }
+    if (stats.grinder) {
+        fields.push({
+            name: '🎮 **The Grinder**',
+            value: `${stats.grinder.name} (**${stats.grinder.value} game${stats.grinder.value === 1 ? '' : 's'}**)`,
+            inline: true,
+        });
+    }
+    if (stats.mvp) {
+        fields.push({
+            name: '🏆 **MVP of the Week**',
+            value: `${stats.mvp.name} (avg AI score **${stats.mvp.value}**)`,
+            inline: true,
+        });
+    }
+    if (stats.inter) {
+        fields.push({
+            name: '🤡 **Inter of the Week**',
+            value: `${stats.inter.name} (avg AI score **${stats.inter.value}**)`,
+            inline: true,
+        });
+    }
+    if (stats.bestGame) {
+        fields.push({
+            name: '⭐ **Best Single Game**',
+            value: `${stats.bestGame.name} (AI score **${stats.bestGame.value}**)`,
+            inline: true,
+        });
+    }
+    if (stats.worstGame) {
+        fields.push({
+            name: '💩 **Worst Single Game**',
+            value: `${stats.worstGame.name} (AI score **${stats.worstGame.value}**)`,
+            inline: true,
+        });
+    }
+
     return {
         title: '📰 **Weekly Diana Digest**',
-        description: `Your server's week in League: **${numberFormatter.format(totalGames)} game${totalGames === 1 ? '' : 's'}** across **${candidates.length} player${candidates.length === 1 ? '' : 's'}**.`,
+        description: `Your server's week in League: **${numberFormatter.format(stats.totalGames)} game${stats.totalGames === 1 ? '' : 's'}** across **${stats.playerCount} player${stats.playerCount === 1 ? '' : 's'}**.`,
         colorHex: 0x5865f2,
         fields: fields.slice(0, 25),
         footer: 'Weekly Digest • Last 7 days',
         timestamp: new Date().toISOString(),
     };
+}
+
+/**
+ * Build the weekly digest payload for one guild, or null when the guild had
+ * no tracked matches this week.
+ */
+export async function buildWeeklyDigestPayload(
+    guildId: string
+): Promise<MessagePayload | null> {
+    const stats = await computeWeeklyDigestStats(guildId);
+    return stats ? buildWeeklyDigestPayloadFromStats(stats) : null;
 }
 
 export function createWeeklyDigestTick(
@@ -239,8 +316,12 @@ export function createWeeklyDigestTick(
                 if (!getNotificationPref(guild, 'digest')) continue;
                 if (!guild.channel_id) continue;
 
-                const payload = await buildWeeklyDigestPayload(guild.guild_id);
-                if (!payload) continue;
+                // Computed once and rendered twice: the embed below and the
+                // event further down carry the same figures, so Meeps' digest
+                // card can never disagree with the Discord post.
+                const stats = await computeWeeklyDigestStats(guild.guild_id);
+                if (!stats) continue;
+                const payload = buildWeeklyDigestPayloadFromStats(stats);
 
                 await messageAdapter.sendMessage(
                     { channelId: guild.channel_id },
@@ -267,6 +348,7 @@ export function createWeeklyDigestTick(
                         guildId: guild.guild_id,
                         squadId,
                         isoWeek,
+                        stats,
                     });
                 }
             } catch (error) {

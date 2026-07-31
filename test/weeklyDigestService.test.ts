@@ -47,6 +47,8 @@ jest.mock(
 
 import {
     buildWeeklyDigestPayload,
+    buildWeeklyDigestPayloadFromStats,
+    computeWeeklyDigestStats,
     createWeeklyDigestTick,
 } from '../packages/diana-core/src/plugins/diana-league-bot/monitoring/weeklyDigestService';
 
@@ -386,6 +388,146 @@ describe('createWeeklyDigestTick', () => {
         ).resolves.toBeUndefined();
 
         expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    // The event used to carry only `isoWeek`, so a consumer could tell that a
+    // digest happened and nothing about what was in it. Meeps renders its own
+    // digest card from these figures (MP-06).
+    it('carries the week as structured stats, not only the ISO week', async () => {
+        getAllGuildConfigsMock.mockResolvedValue([
+            {
+                guild_id: 'g1',
+                channel_id: 'c1',
+                live_posting: true,
+                notification_prefs: {},
+            },
+        ]);
+        getInterCandidatesSinceMock.mockResolvedValue([
+            makeCandidate({
+                puuid: 'a',
+                displayName: 'Carry#1',
+                avgAiScore: 80.4,
+                matchesPlayed: 4,
+            }),
+            makeCandidate({
+                puuid: 'b',
+                displayName: 'Feeder#2',
+                avgAiScore: 20,
+                matchesPlayed: 9,
+            }),
+        ]);
+        const adapter = { sendMessage: jest.fn().mockResolvedValue(undefined) };
+        const events = { emit: jest.fn().mockResolvedValue(undefined) };
+
+        await createWeeklyDigestTick(baseConfig as any, adapter, events)();
+
+        const event = events.emit.mock.calls[0][0];
+        expect(event.stats).toEqual(
+            expect.objectContaining({
+                totalGames: 13,
+                playerCount: 2,
+                // Rounded to the figure the embed prints, so the two renderings
+                // of one week cannot show different numbers.
+                mvp: { name: 'Carry#1', value: 80 },
+                inter: { name: 'Feeder#2', value: 20 },
+                grinder: { name: 'Feeder#2', value: 9 },
+            })
+        );
+    });
+
+    it('computes the week once and renders it twice', async () => {
+        getAllGuildConfigsMock.mockResolvedValue([
+            {
+                guild_id: 'g1',
+                channel_id: 'c1',
+                live_posting: true,
+                notification_prefs: {},
+            },
+        ]);
+        getInterCandidatesSinceMock.mockResolvedValue([makeCandidate()]);
+        const adapter = { sendMessage: jest.fn().mockResolvedValue(undefined) };
+        const events = { emit: jest.fn().mockResolvedValue(undefined) };
+
+        await createWeeklyDigestTick(baseConfig as any, adapter, events)();
+
+        // One roster query for the one guild. A second would mean the embed and
+        // the event were computed separately and could drift apart — and would
+        // double the digest's query cost every week.
+        expect(getInterCandidatesSinceMock).toHaveBeenCalledTimes(1);
+
+        const sent = adapter.sendMessage.mock.calls[0][1];
+        const emitted = events.emit.mock.calls[0][0];
+        const byName = new Map(
+            (sent.fields ?? []).map((f: { name: string; value: string }) => [
+                f.name,
+                f.value,
+            ])
+        );
+        expect(byName.get('🎮 **The Grinder**')).toContain(
+            String(emitted.stats.grinder.value)
+        );
+        expect(sent.description).toContain(String(emitted.stats.totalGames));
+    });
+});
+
+describe('computeWeeklyDigestStats', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        dbQueryMock.mockResolvedValue({ rows: [] });
+        fetchRankHistoryMock.mockResolvedValue([]);
+    });
+
+    it('omits an award nobody earned rather than reporting a zero', async () => {
+        // Everyone flat on LP and nothing scored: no climber, no faller, no
+        // MVP. A zero-valued award would read as "Player#EUW (+0 LP)", which is
+        // a claim the week does not support.
+        getInterCandidatesSinceMock.mockResolvedValue([
+            makeCandidate({ scoredMatchesCount: 0 }),
+        ]);
+
+        const stats = await computeWeeklyDigestStats('g1');
+
+        expect(stats).not.toBeNull();
+        expect(stats!.climber).toBeUndefined();
+        expect(stats!.faller).toBeUndefined();
+        expect(stats!.mvp).toBeUndefined();
+        expect(stats!.inter).toBeUndefined();
+        // The grinder is the one award every non-empty week has.
+        expect(stats!.grinder).toEqual({ name: 'Player#EUW', value: 5 });
+    });
+
+    it('awards no worst game when the week had a single scored game', async () => {
+        getInterCandidatesSinceMock.mockResolvedValue([makeCandidate()]);
+        dbQueryMock.mockResolvedValue({
+            rows: [
+                {
+                    matchId: 'm1',
+                    puuid: 'a',
+                    score: '92.5',
+                    gameName: 'Star',
+                    tagLine: 'EUW',
+                },
+            ],
+        });
+
+        const stats = await computeWeeklyDigestStats('g1');
+
+        expect(stats!.bestGame).toEqual({ name: 'Star#EUW', value: 93 });
+        expect(stats!.worstGame).toBeUndefined();
+    });
+
+    it('renders only the awards present, in the embed order', async () => {
+        const payload = buildWeeklyDigestPayloadFromStats({
+            totalGames: 3,
+            playerCount: 1,
+            grinder: { name: 'Solo#EUW', value: 3 },
+        });
+
+        expect((payload.fields ?? []).map((f) => f.name)).toEqual([
+            '🎮 **The Grinder**',
+        ]);
+        expect(payload.description).toContain('3 games');
+        expect(payload.description).toContain('1 player');
     });
 });
 
