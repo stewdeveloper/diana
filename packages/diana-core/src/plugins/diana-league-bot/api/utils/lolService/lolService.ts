@@ -1,5 +1,10 @@
 import { LolApi, Constants, RiotApi } from 'twisted';
-import { ILolService, ChampionRotation, LiveGameInfo } from '../../../types';
+import {
+    ILolService,
+    ChampionRotation,
+    LiveGameInfo,
+    SummonerProfile,
+} from '../../../types';
 import { SummonerLeagueDto } from 'twisted/dist/models-dto/league/summoner-league/summoner-league.dto';
 import {
     MatchV5DTOs,
@@ -181,6 +186,31 @@ export class LolService implements ILolService {
                 safeRegionGroup
             );
             return response;
+        } catch (error: any) {
+            throw new LolApiError(
+                error?.status ?? 500,
+                error?.message ?? 'Unknown error'
+            );
+        }
+    }
+
+    /**
+     * Live summoner profile, for the DN-3 icon handshake.
+     *
+     * summoner-v4 is per-platform, so this takes a `Region` (EUW1) rather than
+     * the `RegionGroup` (EUROPE) that account-v1 takes. Passing the wrong one is
+     * the easy mistake here and it fails at runtime, not at compile time.
+     */
+    async getSummonerByPUUID(
+        puuid: string,
+        region: Region = Constants.Regions.EU_WEST
+    ): Promise<SummonerProfile> {
+        try {
+            const { response } = await this.lolApi.Summoner.getByPUUID(
+                puuid,
+                region
+            );
+            return response as SummonerProfile;
         } catch (error: any) {
             throw new LolApiError(
                 error?.status ?? 500,

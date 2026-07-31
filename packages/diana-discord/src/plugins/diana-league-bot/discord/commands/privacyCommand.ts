@@ -2,29 +2,39 @@ import {
     SlashCommandBuilder,
     PermissionFlagsBits,
     MessageFlags,
+    type ChatInputCommandInteraction,
 } from 'discord.js';
 import type { SlashCommand } from '../../../../discord/commandTypes';
 import {
     getSummonersForGuild,
     getHiddenPuuids,
     getPrivacy,
+    resolveIdentity,
     setHidden,
+    setHiddenForAll,
     type GuildSummonerRow,
 } from 'diana-core';
 
 /**
- * `/privacy` - opt a tracked player out of rankings (DN-3).
+ * `/privacy` - opt out of rankings (DN-3).
  *
- * **Gated on Manage Server, and that is a compromise this command carries until
- * `/link` ships.** Without verified account linking there is nothing that says
- * which Riot account belongs to the person typing, so a self-service form would
- * let anyone hide - or worse, un-hide - anyone else. `squad_summoners.added_by`
- * looks like an answer and is not: it records who *added* a summoner, not who
- * owns it (issue #142).
+ * Two ways in, and the difference is who is allowed to speak for an account.
  *
- * So for now a server admin acts on request, which is how a friend group works
- * anyway. Once identity lands, a linked player can hide their own accounts
- * without asking anybody.
+ * **`/privacy me`** needs no permission at all. It acts on the accounts linked
+ * to the caller's own identity, which is exactly the set they are entitled to
+ * decide about, and it covers all of them at once - hiding one of somebody's
+ * three accounts while the other two stay on a leaderboard is not what anybody
+ * means by opting out.
+ *
+ * **`/privacy hide|show <name>`** still requires Manage Server. Naming somebody
+ * else's account is an administrative act whether or not the caller has linked
+ * anything, so it stays where an admin can be held responsible for it. This is
+ * also the only route open to a player who has not linked.
+ *
+ * The command-level permission is the *lower* of the two, so `me` is reachable;
+ * the admin subcommands re-check `ManageGuild` at execution time. Discord's
+ * `setDefaultMemberPermissions` is per command, not per subcommand, which is
+ * why the check is here rather than declared.
  */
 
 interface ResolvedSummoner {
@@ -36,6 +46,17 @@ interface ResolvedSummoner {
 type Resolution =
     | { ok: true; summoner: ResolvedSummoner }
     | { ok: false; message: string };
+
+/**
+ * Whether the caller may act on somebody else's account.
+ *
+ * Defaults to **refusing** when permissions cannot be read at all - in a DM,
+ * say, where `memberPermissions` is null. A privacy control that fails open is
+ * not a privacy control.
+ */
+const hasManageGuild = (interaction: ChatInputCommandInteraction): boolean =>
+    interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ===
+    true;
 
 /**
  * Find one tracked summoner by name, and optionally tag.
@@ -85,7 +106,21 @@ export const privacyCommand: SlashCommand = {
         .setDescription(
             'Hide a tracked player from leaderboards, digests and recaps.'
         )
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+        .addSubcommand((sub) =>
+            sub
+                .setName('me')
+                .setDescription(
+                    'Hide or show your own linked accounts. No permission needed.'
+                )
+                .addBooleanOption((option) =>
+                    option
+                        .setName('hidden')
+                        .setDescription(
+                            'True to hide yourself, false to appear again.'
+                        )
+                        .setRequired(true)
+                )
+        )
         .addSubcommand((sub) =>
             sub
                 .setName('hide')
@@ -151,7 +186,53 @@ export const privacyCommand: SlashCommand = {
         // for.
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+        // `me` acts only on the caller's own linked accounts, so it needs no
+        // permission. Everything else names somebody else's account, which is
+        // an administrative act. Checked here because Discord's declared
+        // permissions are per command, not per subcommand.
+        if (subcommand !== 'me' && !hasManageGuild(interaction)) {
+            await interaction.editReply(
+                'Only someone with **Manage Server** can change another player’s visibility. ' +
+                    'To hide your own linked accounts, use `/privacy me`.'
+            );
+            return;
+        }
+
         try {
+            if (subcommand === 'me') {
+                const hidden = interaction.options.getBoolean('hidden', true);
+                const identity = await resolveIdentity(
+                    'discord_user',
+                    interaction.user.id
+                );
+
+                if (identity.puuids.length === 0) {
+                    await interaction.editReply(
+                        'You have no linked Riot accounts, so there is nothing for Diana to hide. ' +
+                            'Link one with `/link start`, or ask an admin to run `/privacy hide`.'
+                    );
+                    return;
+                }
+
+                // Every linked account at once. Hiding one of somebody's three
+                // while the other two stay on a leaderboard is not opting out.
+                await setHiddenForAll(
+                    identity.puuids,
+                    hidden,
+                    interaction.user.id
+                );
+
+                const count = identity.puuids.length;
+                const accounts = `${count} linked account${count === 1 ? '' : 's'}`;
+                await interaction.editReply(
+                    hidden
+                        ? `Hidden. Your ${accounts} are off leaderboards, digests and recaps. ` +
+                              'Your own match posts still go out.'
+                        : `Visible again. Your ${accounts} are back on leaderboards, digests and recaps.`
+                );
+                return;
+            }
+
             const tracked = (await getSummonersForGuild(
                 guildId
             )) as GuildSummonerRow[];

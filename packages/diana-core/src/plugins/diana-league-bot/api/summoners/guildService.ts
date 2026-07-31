@@ -43,6 +43,14 @@ export interface GuildConfig {
     live_posting: boolean;
     notification_prefs: Record<string, boolean> | null;
     competitive_scope: CompetitiveScope | null;
+    /**
+     * Whether `/link` may complete without the icon handshake (DN-3).
+     *
+     * Nullable in the type, not in the column: a row written before migration
+     * 019 reads back as undefined through some drivers, and treating that as
+     * "allowed" would turn a missing column into an open door.
+     */
+    allow_trusted_links: boolean | null;
     created_at: string;
 }
 
@@ -180,6 +188,34 @@ export const setGuildCompetitiveScope = async (
          ON CONFLICT (guild_id) DO UPDATE SET competitive_scope = EXCLUDED.competitive_scope
          RETURNING *`,
         [guildId, scope]
+    );
+    return result.rows[0];
+};
+
+/**
+ * Whether this server lets `/link` skip verification (DN-3).
+ *
+ * Defaults closed on anything other than an explicit `true`, so a missing row,
+ * a missing column and an explicit `false` all mean the same safe thing.
+ */
+export const allowsTrustedLinks = (
+    config: Pick<GuildConfig, 'allow_trusted_links'> | null | undefined
+): boolean => config?.allow_trusted_links === true;
+
+export const getGuildAllowsTrustedLinks = async (
+    guildId: string
+): Promise<boolean> => allowsTrustedLinks(await getGuildConfig(guildId));
+
+export const setGuildAllowTrustedLinks = async (
+    guildId: string,
+    allowed: boolean
+): Promise<GuildConfig> => {
+    const result = await db.query(
+        `INSERT INTO guild_config (guild_id, allow_trusted_links)
+         VALUES ($1, $2)
+         ON CONFLICT (guild_id) DO UPDATE SET allow_trusted_links = EXCLUDED.allow_trusted_links
+         RETURNING *`,
+        [guildId, allowed]
     );
     return result.rows[0];
 };

@@ -1,6 +1,6 @@
 {
     "name": "diana-discord",
-    "version": "2.0.18",
+    "version": "2.0.19",
     "private": false,
     "license": "ISC",
     "main": "dist/index.js",
@@ -22,6 +22,6 @@
     "dependencies": {
         "discord.js": "^14.25.1",
         "dotenv": "^17.3.1",
-        "diana-core": "2.0.37"
+        "diana-core": "2.0.38"
     }
 }
