@@ -484,4 +484,60 @@ describe('guildService', () => {
             expect(result).toEqual([]);
         });
     });
+
+    // ─── allowsTrustedLinks (DN-3) ─────────────────────────────────────────────
+
+    describe('allowsTrustedLinks', () => {
+        it('is true only for an explicit true', () => {
+            expect(
+                guildService.allowsTrustedLinks({ allow_trusted_links: true })
+            ).toBe(true);
+        });
+
+        it('is false for an explicit false', () => {
+            expect(
+                guildService.allowsTrustedLinks({ allow_trusted_links: false })
+            ).toBe(false);
+        });
+
+        it('is false for a guild with no config row', () => {
+            expect(guildService.allowsTrustedLinks(null)).toBe(false);
+            expect(guildService.allowsTrustedLinks(undefined)).toBe(false);
+        });
+
+        it('is false when the column is missing entirely', () => {
+            // A row written before migration 019 reads back as undefined
+            // through some drivers, and treating that as "allowed" would turn
+            // a missing column into an open door.
+            expect(
+                guildService.allowsTrustedLinks({
+                    allow_trusted_links: null,
+                })
+            ).toBe(false);
+            expect(guildService.allowsTrustedLinks({} as never)).toBe(false);
+        });
+
+        it('reads through from a guild id', async () => {
+            queryMock.mockResolvedValue({
+                rows: [{ guild_id: 'g1', allow_trusted_links: true }],
+            });
+            await expect(
+                guildService.getGuildAllowsTrustedLinks('g1')
+            ).resolves.toBe(true);
+        });
+    });
+
+    describe('setGuildAllowTrustedLinks', () => {
+        it('upserts the setting', async () => {
+            queryMock.mockResolvedValue({
+                rows: [{ guild_id: 'g1', allow_trusted_links: true }],
+            });
+
+            await guildService.setGuildAllowTrustedLinks('g1', true);
+
+            const [sql, params] = queryMock.mock.calls[0];
+            expect(String(sql)).toContain('ON CONFLICT (guild_id) DO UPDATE');
+            expect(params).toEqual(['g1', true]);
+        });
+    });
 });

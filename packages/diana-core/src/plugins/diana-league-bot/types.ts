@@ -72,6 +72,22 @@ export interface LiveGameInfo {
     [key: string]: unknown;
 }
 
+/**
+ * A summoner-v4 profile, narrowed to the fields Diana reads.
+ *
+ * Declared here rather than imported from twisted for the same reason
+ * `ChampionRotation` and `LiveGameInfo` are: the shape Diana depends on should
+ * be Diana's, so a change in the client library is a compile error in one file
+ * instead of a silent behaviour change in several.
+ */
+export interface SummonerProfile {
+    puuid: string;
+    profileIconId: number;
+    summonerLevel?: number;
+    revisionDate?: number;
+    [key: string]: unknown;
+}
+
 export interface ILolService {
     checkConnection(): Promise<boolean>;
     getMatchesByPUUID(
@@ -104,6 +120,18 @@ export interface ILolService {
     getChampionRotation(region?: string): Promise<ChampionRotation>;
     /** Current live game for a player, or null when not in game */
     getActiveGame(puuid: string, region?: string): Promise<LiveGameInfo | null>;
+    /**
+     * Live summoner profile, for the DN-3 icon handshake.
+     *
+     * The only read in the codebase that has to be *current* rather than
+     * historical: `match_details.participants` carries a `profileIcon`, but it
+     * is the icon at the time of that match, which cannot verify "change your
+     * icon to this, now".
+     */
+    getSummonerByPUUID(
+        puuid: string,
+        region?: string
+    ): Promise<SummonerProfile>;
 }
 
 /**

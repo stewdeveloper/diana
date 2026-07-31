@@ -1,4 +1,12 @@
-import { ILolService, ChampionRotation, LiveGameInfo } from '../../../types';
+import {
+    ILolService,
+    ChampionRotation,
+    LiveGameInfo,
+    SummonerProfile,
+} from '../../../types';
+
+/** The icon `MockLolService` always reports. Exported so tests can match it. */
+export const MOCK_PROFILE_ICON_ID = 4568;
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { SummonerLeagueDto } from 'twisted/dist/models-dto/league/summoner-league/summoner-league.dto';
@@ -108,5 +116,25 @@ export class MockLolService implements ILolService {
         _region?: string
     ): Promise<LiveGameInfo | null> {
         return JsonLoader.load<LiveGameInfo>('riot_active_game_found.json');
+    }
+
+    /**
+     * A stable profile for the DN-3 icon handshake.
+     *
+     * The icon is a fixed constant rather than a random or time-derived value:
+     * the handshake tests compare it against a challenge, and a mock that
+     * changed between calls would make "verification succeeded" and
+     * "verification failed" both reachable from the same test.
+     */
+    async getSummonerByPUUID(
+        puuid: string,
+        _region?: string
+    ): Promise<SummonerProfile> {
+        return {
+            puuid,
+            profileIconId: MOCK_PROFILE_ICON_ID,
+            summonerLevel: 250,
+            revisionDate: 0,
+        };
     }
 }

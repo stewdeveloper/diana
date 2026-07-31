@@ -59,7 +59,7 @@ The unit of value is the **squad**: the 3–6 people who queue together on a Tue
 
 **It is not a League bot - it is a plugin platform that currently ships two game plugins**, `diana-league-bot` and `diana-apex-bot` (Pathfinder).
 
-**Command surface (22 + core).** League (13): `/add` `/remove` `/summoner` `/champion` `/iotw` `/mvp` `/compare` `/leaderboard` `/livegame` `/setchannel` `/config` `/privacy` `/help`. Apex (8): `/apex-add` `/apex-remove` `/apex-player` `/apex-matches` `/apex-predator` `/apex-uid` `/apex-channel` `/apex-help`. Core: `/ping`.
+**Command surface (23 + core).** League (15): `/add` `/remove` `/summoner` `/champion` `/iotw` `/mvp` `/compare` `/leaderboard` `/livegame` `/setchannel` `/config` `/privacy` `/link` `/unlink` `/help`. Apex (8): `/apex-add` `/apex-remove` `/apex-player` `/apex-matches` `/apex-predator` `/apex-uid` `/apex-channel` `/apex-help`. Core: `/ping`.
 
 **The pipeline.** One cron per minute → check each tracked summoner's latest match id → on a new completed match, fetch full match-v5 → store the **entire participants/teams JSON** (including the ~100-metric `challenges` block) in `match_details` → compute **AI score and lobby placement for all ten players** → diff ranked standing into `rank_tracking` → emit a `MessagePayload` → fan out through `MessageAdapter` to Discord **and** the Meeps webhook.
 
@@ -180,13 +180,22 @@ This makes every leaderboard, digest and recap correct in both destinations.
 
 > **Note against `new-design.md` §1.2 and DN-2:** the `/iotw` cross-guild leak it describes is **already fixed** - `interStats.ts:94-120` carries the `guild_summoners` join, gated on `InterStatsOptions.guildId`, shipped in #113. DN-2 is required for _portability_, not to close a live leak.
 
-### 5.3 Unified identity (DN-3)
+### 5.3 Unified identity (DN-3) ✅
 
 Today nothing is authoritative: Meeps has `users.discord_user_id`, `users.league_username` (free text!) and `valorant_links.riot_puuid`; Diana has `summoners` + `guild_summoners.added_by`, which records who _added_ a summoner, not who _owns_ it.
 
 One `identities` table: one person → many linked accounts (Riot PUUID per game, Discord id, Meeps user). Verify properly - apply for **Riot Sign On**; failing that, the profile-icon handshake (~2 calls). **Delete `league_username` as a matching key** - it is a correctness bug waiting to happen.
 
 `new-design.md` moves this from the old roadmap's Phase 4 to R1, and that is right: honest consent, privacy opt-out and per-player attribution all depend on it, and all three are R1 requirements.
+
+> **Shipped on Diana's side** — migrations 018 and 019, `/link`, `/unlink`,
+> `/privacy`, and `GET /api/identity/resolve` for Meeps. RSO is still not
+> applied for (gate 5), so the icon handshake is what actually runs.
+>
+> **Deleting `league_username` as a matching key is a Meeps migration** and is
+> not part of this. Nothing on Diana's side ever read it; it belongs with
+> Meeps' MP-05, which is also where the Meeps end of `POST
+/api/identity/meeps-user` gets called.
 
 ### 5.4 One Riot pipeline (§5.2 of the strategy doc)
 
@@ -210,7 +219,7 @@ Scheduled in R3 rather than R1 because it is not a blocker on charging money - b
 | ----------- | ------------------------------------------------------------------------------------------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | ✅ **DN-1** | Typed event bus + `EventAdapter`, with at-least-once delivery and deterministic idempotency keys | M            | **Shipped.** `EventAdapter` ships alongside `MessageAdapter`; Discord output byte-identical (13 snapshots in `discordPayloadRegression.test.ts`); Meeps stores events as rows in `diana_events`; `event_id` is the primary key, so redelivery is a no-op |
 | ✅ **DN-2** | `squad_id` scope, portable across Discord guild and Meeps space                                  | S–M          | **Shipped.** Migration 014 (`squads`, `squad_attachments`, `squad_summoners`); every roster read scoped to the squad; events carry `squadId`; two-squad isolation tested in `interStats.test.ts` and `weeklyDigestService.test.ts`                       |
-| 🔨 **DN-3** | Riot account linking (RSO if granted, icon handshake otherwise) + per-player privacy opt-out     | M            | **Opt-out shipped** — migration 018, `/privacy`, filtered at all three read paths. Verified linking outstanding; see §6.1                                                                                                                                |
+| ✅ **DN-3** | Riot account linking (RSO if granted, icon handshake otherwise) + per-player privacy opt-out     | M            | **Shipped.** Migration 018 (`summoner_privacy`) + 019 (`identities`, `identity_accounts`); opt-out filtered at all three read paths; `/link` icon handshake, `/unlink`, `/privacy`. See §6.1                                                             |
 | ⬜ **DN-8** | Riot compliance package                                                                          | S, long lead | Product registered; status Approved or Acknowledged; single production key; transformativeness statement written; free tier defined                                                                                                                      |
 | ⬜ **DN-4** | Betting removed from the roadmap                                                                 | XS           | No wagering design or code path exists anywhere. **Note: no betting code was ever written** - this is a documentation deletion, already done by this file's existence                                                                                    |
 | ~~DN-10~~   | ~~Migration tooling hardening~~ — **dropped, see below**                                         | —            | Not needed                                                                                                                                                                                                                                               |
@@ -253,16 +262,49 @@ Three things worth recording, because each was nearly got wrong:
    without saying anything. `/summoner` and `/compare` still find a hidden
    player, and their own match posts still go out.
 
-**⬜ Verified linking.** `identities` + `identity_accounts`, the profile-icon
-handshake, `/link` and `/unlink`. Needs a `getSummonerByPUUID` on `ILolService`
-— summoner-v4 is not currently on the interface at all.
+**✅ Verified linking.** Migration 019 adds `identities`, `identity_accounts`
+and `identity_link_challenges`; `/link start` → change your icon → `/link
+confirm` verifies through summoner-v4; `/unlink` detaches. `GET
+/api/identity/resolve` is the route Meeps calls to turn its own user ids into
+puuids — the join the recap cross-reference and the Session Curve need.
 
-> **`/privacy` is gated on Manage Server, and that is temporary.** Without
-> verified linking nothing says which Riot account belongs to the person typing,
-> so a self-service form would let anyone un-hide anyone else.
-> `squad_summoners.added_by` looks like the answer and is not: it records who
-> _added_ a summoner, not who owns it (#142). An admin acting on request is how
-> a friend group works anyway; self-service arrives with `/link`.
+Four more things worth recording:
+
+1. **It reuses the DN-2 shape** — a bare row plus `(kind, external_id)`
+   attachments. `PRIMARY KEY (kind, external_id)` is load-bearing exactly as it
+   was for `squad_attachments`: one Riot account belongs to one person, so
+   `puuid → identity` is total and no read path has to decide what a contested
+   link means. A contested link is **refused, never moved** — silently
+   reassigning would let anyone capture an account by linking it second.
+2. **Unverified is a real state, and `trusted` must not set `verified_at`.**
+   Deriving the timestamp from "was a method given" rather than from _which_
+   method silently marks every trusted link verified, collapsing the one
+   distinction that lets auto rank roles be stricter than a lookup. A test
+   caught this after it was written wrong; the fix is an explicit
+   `VERIFYING_METHODS` set.
+3. **The challenge icon excludes the one the player already has.** Otherwise
+   roughly one handshake in ten "verifies" somebody who changed nothing.
+4. **It needed a new `ILolService` method.** summoner-v4 was not on the
+   interface at all — `match_details.participants` carries a `profileIcon`, but
+   that is the icon at match time, which cannot verify "change it now". Ships
+   with its `MockLolService` counterpart, per §13.4.
+
+> **`docs/access.md` is still missing (§9), so whether the production key grants
+> summoner-v4 is genuinely unverified.** `/link` therefore names the endpoint in
+> its 403 message rather than saying "try again": the operator's fix is a key
+> request, not a retry. A server that would rather not depend on it can set
+> `allow_trusted_links`, and `/link` completes without the handshake — default
+> off, because that setting's blast radius is a stranger claiming somebody
+> else's account.
+
+**Who may hide whom.** `/privacy me` needs no permission and covers every
+account linked to the caller at once. `/privacy hide|show <name>` still requires
+Manage Server, because naming somebody else's account is an administrative act —
+and it stays the only route open to a player who has not linked.
+`squad_summoners.added_by` is not a substitute: it records who _added_ a
+summoner, not who owns it (#142). The check runs at execution time rather than
+being declared, because Discord's `setDefaultMemberPermissions` is per command,
+so declaring it would have put self-service behind Manage Server too.
 
 ### Meeps track
 
@@ -352,6 +394,10 @@ handshake, `/link` and `/unlink`. Needs a `getSummonerByPUUID` on `ILolService`
 >    carries the id and Meeps resolves it. Identity blocks only the
 >    _cross-reference_ - knowing the person who left is the person who played
 >    Warwick. §5.3 and Meeps' own §3 both overstate this dependency.
+>    **That cross-reference is now available**: DN-3 shipped, and
+>    `GET /api/identity/resolve?kind=meeps_user` returns the puuids. Diana does
+>    not do the join itself - the recap event carries participants by Meeps user
+>    id and standouts by puuid, and Meeps has both halves.
 > 3. **"Worst: everyone's, game 6" is load-bearing, not a turn of phrase.** The
 >    worst game is the lowest _mean_ squad score, so it names a game and not a
 >    player. `digest.weekly`'s `worstGame` names a person, deliberately and for a
@@ -562,7 +608,7 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 | MP-9      | Typed backend + coverage             | §8.6 R3                                             |
 | DN-1      | Typed event bus                      | ✅ **Shipped** - §5.1, §6 R1                        |
 | DN-2      | `squad_id` scope                     | ✅ **Shipped** - §5.2, §6 R1                        |
-| DN-3      | Riot account linking + opt-out       | 🔨 opt-out shipped — §5.3, §6 R1, §6.1              |
+| DN-3      | Riot account linking + opt-out       | ✅ **Shipped** — §5.3, §6 R1, §6.1                  |
 | DN-4      | Kill betting                         | §6 R1 - **doc deletion only, no code existed**      |
 | DN-5      | Presence ingestion                   | ✅ **Shipped** - §7 R2                              |
 | DN-6      | Session service                      | ✅ **Shipped** - §7 R2                              |
@@ -603,7 +649,7 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 
 ### 13.3 Migrations by release
 
-- **R1** `[Diana]`: `squads` + squad attachments (guild ⇄ space) — ✅ `014_squads.sql`; per-player privacy — ✅ `018_summoner_privacy.sql` (DN-3, keyed on puuid so it needs no identity); `identities` + `identity_accounts` — DN-3, outstanding.
+- **R1** `[Diana]`: `squads` + squad attachments (guild ⇄ space) — ✅ `014_squads.sql`; per-player privacy — ✅ `018_summoner_privacy.sql` (DN-3, keyed on puuid so it needs no identity); `identities` + `identity_accounts` + `identity_link_challenges` + `guild_config.allow_trusted_links` — ✅ `019_identities.sql`.
 - **R1** `[Meeps]`: `030_diana_events.sql` — the event log, `event_id` as primary key for idempotency. ✅ shipped (it landed as 030, not 029).
 - **R1** `[Meeps]`: `spaces`, `channels`, `memberships`, invite links — ✅ `032_spaces.sql`, `033_messages_channel_id_backfill.sql`; roles/permissions — ✅ `035_space_bans.sql`; consent + export records — MP-7, outstanding.
 - **R2** `[Diana]`: voice presence — ✅ `015_presence.sql` (`presence_events`, `presence_consent`); `sessions`, `session_participants`, `session_matches` — ✅ `016_sessions.sql` (DN-6, derived and rebuildable); `sessions.recap_emitted_at` — ✅ `017_session_recaps.sql` (§7.1, delivery bookkeeping rather than derived state).

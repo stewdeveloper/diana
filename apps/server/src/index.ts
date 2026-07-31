@@ -13,6 +13,7 @@ import {
     squadsMachineRouter,
     presenceApiRouter,
     privacyApiRouter,
+    identityApiRouter,
     sessionsApiRouter,
     authApiRouter,
     requireAuth,
@@ -150,6 +151,10 @@ async function main() {
     // one more: a privacy decision is made by a person, so the route that
     // records it should know which person rather than only which machine.
     app.use('/api/privacy', requireAuth, privacyApiRouter);
+    // Identity resolution (DN-3) carries the Meeps shared secret, like presence
+    // ingestion: Meeps asks it with its own user ids to find the matching Riot
+    // accounts, and it is a server asking rather than a logged-in browser.
+    app.use('/api/identity', identityApiRouter);
 
     setExpressApp(app);
     setPluginMessageAdapter(leagueBotPlugin.id, createDianaPluginAdapter());

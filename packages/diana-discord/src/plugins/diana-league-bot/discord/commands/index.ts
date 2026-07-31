@@ -10,6 +10,8 @@ import { addSummonerCommand } from './addSummonerCommand';
 import { removeSummonerCommand } from './removeSummonerCommand';
 import { configCommand } from './configCommand';
 import { privacyCommand } from './privacyCommand';
+import { linkCommand } from './linkCommand';
+import { unlinkCommand } from './unlinkCommand';
 import { helpCommand } from './helpCommand';
 
 export const leagueDiscordCommands = [
@@ -25,6 +27,8 @@ export const leagueDiscordCommands = [
     removeSummonerCommand,
     configCommand,
     privacyCommand,
+    linkCommand,
+    unlinkCommand,
     helpCommand,
 ];
 
@@ -41,5 +45,7 @@ export {
     removeSummonerCommand,
     configCommand,
     privacyCommand,
+    linkCommand,
+    unlinkCommand,
     helpCommand,
 };

@@ -25,6 +25,17 @@ export const helpCommand: SlashCommand = {
                     inline: false,
                 },
                 {
+                    name: '🔗 Your account',
+                    value: [
+                        '`/link start <name> <tag> [region]` - Prove a Riot account is yours.',
+                        '`/link confirm` - Finish linking after changing your profile icon.',
+                        '`/link status` - See which accounts are linked to you.',
+                        '`/unlink [puuid]` - Unlink a Riot account from your Discord account.',
+                        '`/privacy me <true|false>` - Hide or show your own linked accounts.',
+                    ].join('\n'),
+                    inline: false,
+                },
+                {
                     name: '👤 Summoner Tracking',
                     value: [
                         '`/add <name> <tag> [region]` - Start tracking a summoner in this server.',
