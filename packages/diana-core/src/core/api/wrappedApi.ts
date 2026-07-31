@@ -108,7 +108,9 @@ export const getSquadWrapped = async (
         res.json({ squadId, period, wrapped });
     } catch (error) {
         console.error(
-            `[${timestamp()}] [Diana:API] GET /api/squads/${squadId}/wrapped failed:`,
+            '[%s] [Diana:API] GET /api/squads/%s/wrapped failed:',
+            timestamp(),
+            squadId,
             error
         );
         res.status(500).json({ error: 'Failed to compute squad wrapped' });
