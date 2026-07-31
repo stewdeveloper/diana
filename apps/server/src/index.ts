@@ -12,6 +12,7 @@ import {
     squadsApiRouter,
     squadsMachineRouter,
     presenceApiRouter,
+    privacyApiRouter,
     sessionsApiRouter,
     authApiRouter,
     requireAuth,
@@ -145,6 +146,10 @@ async function main() {
     // Presence ingestion (DN-5) is machine-to-machine from the Meeps server, so
     // it carries its own shared-secret gate instead of the dashboard's JWT.
     app.use('/api/presence', presenceApiRouter);
+    // Privacy (DN-3) sits behind the JWT for the same reason sessions do, and
+    // one more: a privacy decision is made by a person, so the route that
+    // records it should know which person rather than only which machine.
+    app.use('/api/privacy', requireAuth, privacyApiRouter);
 
     setExpressApp(app);
     setPluginMessageAdapter(leagueBotPlugin.id, createDianaPluginAdapter());

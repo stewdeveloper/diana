@@ -558,4 +558,15 @@ describe('fetchWeeklyScoredGames competitive filtering', () => {
         expect(query).toContain('EXISTS');
         expect(query).not.toContain('JOIN match_details');
     });
+
+    it('excludes players who opted out of rankings (DN-3)', async () => {
+        // The digest reads twice: headline figures come from
+        // getInterCandidatesSince, which filters itself, but best and worst
+        // game come from here. Filtering only the first would have named an
+        // opted-out player as the week's best game.
+        await buildWeeklyDigestPayload('g1');
+        expect(scoredGamesQuery().replace(/\s+/g, ' ')).toContain(
+            'NOT EXISTS ( SELECT 1 FROM summoner_privacy sp'
+        );
+    });
 });

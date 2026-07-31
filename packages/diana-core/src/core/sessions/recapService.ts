@@ -19,6 +19,7 @@ import {
     type SessionParticipantSummary,
     type SessionStandout,
 } from '../eventTypes';
+import { notHiddenPredicate } from '../privacy/privacyService';
 import { DEFAULT_IDLE_GAP_MS } from './sessionise';
 import type { SessionDetail } from './sessionService';
 
@@ -100,6 +101,15 @@ export interface SessionStandouts {
  * Restricted to `squadPuuids` deliberately. `match_scores` holds all ten players
  * in a lobby, and the best performance in the room is very often a stranger's -
  * which is not what "best game" means on a card about five friends.
+ *
+ * Players who opted out of rankings (DN-3) are excluded here rather than after
+ * `pickStandouts`, so that a hidden player's score cannot win best game and
+ * leave the card with no best game at all. Filtering afterwards would silently
+ * turn one person's privacy choice into a missing line for everyone.
+ *
+ * The night's *shape* - its games, its record, who was in voice - is unaffected.
+ * Opting out means not being named in a ranking, not being erased from the
+ * evening.
  */
 const getSessionScores = async (
     sessionId: string,
@@ -118,7 +128,8 @@ const getSessionScores = async (
            JOIN match_scores ms ON ms."matchId" = sm.match_id
            LEFT JOIN summoners s ON s."puuid" = ms."puuid"
           WHERE sm.session_id = $1
-            AND ms."puuid" = ANY($2::varchar[])`,
+            AND ms."puuid" = ANY($2::varchar[])
+            AND ${notHiddenPredicate('ms."puuid"')}`,
         [sessionId, squadPuuids]
     );
     return result.rows;

@@ -9,6 +9,7 @@ import { setChannelCommand } from './setChannelCommand';
 import { addSummonerCommand } from './addSummonerCommand';
 import { removeSummonerCommand } from './removeSummonerCommand';
 import { configCommand } from './configCommand';
+import { privacyCommand } from './privacyCommand';
 import { helpCommand } from './helpCommand';
 
 export const leagueDiscordCommands = [
@@ -23,6 +24,7 @@ export const leagueDiscordCommands = [
     addSummonerCommand,
     removeSummonerCommand,
     configCommand,
+    privacyCommand,
     helpCommand,
 ];
 
@@ -38,5 +40,6 @@ export {
     addSummonerCommand,
     removeSummonerCommand,
     configCommand,
+    privacyCommand,
     helpCommand,
 };

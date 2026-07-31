@@ -19,6 +19,8 @@ export const helpCommand: SlashCommand = {
                         '`/config live-posting true/false` - Enable or disable live match notifications. Requires **Manage Server**.',
                         '`/config notifications <type> true/false` - Toggle a specific notification type. Requires **Manage Server**.',
                         '`/config view` - View the current bot settings for this server.',
+                        '`/privacy hide|show <name> [tag]` - Keep a player off leaderboards, digests and recaps. Requires **Manage Server**.',
+                        '`/privacy status` - List who is currently hidden.',
                     ].join('\n'),
                     inline: false,
                 },

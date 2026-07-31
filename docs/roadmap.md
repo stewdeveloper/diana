@@ -59,7 +59,7 @@ The unit of value is the **squad**: the 3–6 people who queue together on a Tue
 
 **It is not a League bot - it is a plugin platform that currently ships two game plugins**, `diana-league-bot` and `diana-apex-bot` (Pathfinder).
 
-**Command surface (21 + core).** League (12): `/add` `/remove` `/summoner` `/champion` `/iotw` `/mvp` `/compare` `/leaderboard` `/livegame` `/setchannel` `/config` `/help`. Apex (8): `/apex-add` `/apex-remove` `/apex-player` `/apex-matches` `/apex-predator` `/apex-uid` `/apex-channel` `/apex-help`. Core: `/ping`.
+**Command surface (22 + core).** League (13): `/add` `/remove` `/summoner` `/champion` `/iotw` `/mvp` `/compare` `/leaderboard` `/livegame` `/setchannel` `/config` `/privacy` `/help`. Apex (8): `/apex-add` `/apex-remove` `/apex-player` `/apex-matches` `/apex-predator` `/apex-uid` `/apex-channel` `/apex-help`. Core: `/ping`.
 
 **The pipeline.** One cron per minute → check each tracked summoner's latest match id → on a new completed match, fetch full match-v5 → store the **entire participants/teams JSON** (including the ~100-metric `challenges` block) in `match_details` → compute **AI score and lobby placement for all ten players** → diff ranked standing into `rank_tracking` → emit a `MessagePayload` → fan out through `MessageAdapter` to Discord **and** the Meeps webhook.
 
@@ -210,7 +210,7 @@ Scheduled in R3 rather than R1 because it is not a blocker on charging money - b
 | ----------- | ------------------------------------------------------------------------------------------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | ✅ **DN-1** | Typed event bus + `EventAdapter`, with at-least-once delivery and deterministic idempotency keys | M            | **Shipped.** `EventAdapter` ships alongside `MessageAdapter`; Discord output byte-identical (13 snapshots in `discordPayloadRegression.test.ts`); Meeps stores events as rows in `diana_events`; `event_id` is the primary key, so redelivery is a no-op |
 | ✅ **DN-2** | `squad_id` scope, portable across Discord guild and Meeps space                                  | S–M          | **Shipped.** Migration 014 (`squads`, `squad_attachments`, `squad_summoners`); every roster read scoped to the squad; events carry `squadId`; two-squad isolation tested in `interStats.test.ts` and `weeklyDigestService.test.ts`                       |
-| ⬜ **DN-3** | Riot account linking (RSO if granted, icon handshake otherwise) + per-player privacy opt-out     | M            | Verified link; opt-out honoured by every leaderboard, digest and recap                                                                                                                                                                                   |
+| 🔨 **DN-3** | Riot account linking (RSO if granted, icon handshake otherwise) + per-player privacy opt-out     | M            | **Opt-out shipped** — migration 018, `/privacy`, filtered at all three read paths. Verified linking outstanding; see §6.1                                                                                                                                |
 | ⬜ **DN-8** | Riot compliance package                                                                          | S, long lead | Product registered; status Approved or Acknowledged; single production key; transformativeness statement written; free tier defined                                                                                                                      |
 | ⬜ **DN-4** | Betting removed from the roadmap                                                                 | XS           | No wagering design or code path exists anywhere. **Note: no betting code was ever written** - this is a documentation deletion, already done by this file's existence                                                                                    |
 | ~~DN-10~~   | ~~Migration tooling hardening~~ — **dropped, see below**                                         | —            | Not needed                                                                                                                                                                                                                                               |
@@ -224,6 +224,45 @@ Scheduled in R3 rather than R1 because it is not a blocker on charging money - b
 > **The `supportUrl` divergence in DN-1 is moot** and has been removed from the
 > acceptance criteria. `serializeMessagePayload` does drop the field, but nothing
 > consumes the message webhook — see §3.2. The path retires under MP-6.
+
+#### 6.1 DN-3, in two halves
+
+DN-3's acceptance is one line — _"verified link; opt-out honoured by every
+leaderboard, digest and recap"_ — but that is two independent features, and they
+ship separately. Design: `docs/superpowers/specs/2026-07-31-dn3-identity-and-privacy-design.md`.
+
+**✅ Privacy opt-out.** Migration 018 adds `summoner_privacy`; `/privacy
+hide|show|status` writes it; three read paths filter on it.
+
+Three things worth recording, because each was nearly got wrong:
+
+1. **It is keyed on the puuid, not on the identity.** Keying it on the identity
+   would mean **you must identify yourself before you can become invisible** —
+   a bad privacy story and a worse one to defend in a Riot compliance review.
+   Keyed on the puuid it works with no identity data at all, which is why this
+   half could ship first rather than waiting on the other.
+2. **There are three read paths, not one.** `getInterCandidatesSince` is the
+   choke point for `/iotw`, `/mvp`, `/leaderboard`, `/compare`, `/summoner` and
+   the digest's headline figures — but the digest reads a **second** time for
+   its best and worst game, and the recap reads a third. Filtering only the
+   obvious one would have left an opted-out player named as the week's best
+   game.
+3. **Opting out hides you from rankings, not from lookups.** Every ranking
+   surface omits `targetPuuid` and every direct lookup sets it, so
+   `respectPrivacy` defaults to `!targetPuuid` and all six callers are correct
+   without saying anything. `/summoner` and `/compare` still find a hidden
+   player, and their own match posts still go out.
+
+**⬜ Verified linking.** `identities` + `identity_accounts`, the profile-icon
+handshake, `/link` and `/unlink`. Needs a `getSummonerByPUUID` on `ILolService`
+— summoner-v4 is not currently on the interface at all.
+
+> **`/privacy` is gated on Manage Server, and that is temporary.** Without
+> verified linking nothing says which Riot account belongs to the person typing,
+> so a self-service form would let anyone un-hide anyone else.
+> `squad_summoners.added_by` looks like the answer and is not: it records who
+> _added_ a summoner, not who owns it (#142). An admin acting on request is how
+> a friend group works anyway; self-service arrives with `/link`.
 
 ### Meeps track
 
@@ -523,7 +562,7 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 | MP-9      | Typed backend + coverage             | §8.6 R3                                             |
 | DN-1      | Typed event bus                      | ✅ **Shipped** - §5.1, §6 R1                        |
 | DN-2      | `squad_id` scope                     | ✅ **Shipped** - §5.2, §6 R1                        |
-| DN-3      | Riot account linking + opt-out       | §5.3, §6 R1                                         |
+| DN-3      | Riot account linking + opt-out       | 🔨 opt-out shipped — §5.3, §6 R1, §6.1              |
 | DN-4      | Kill betting                         | §6 R1 - **doc deletion only, no code existed**      |
 | DN-5      | Presence ingestion                   | ✅ **Shipped** - §7 R2                              |
 | DN-6      | Session service                      | ✅ **Shipped** - §7 R2                              |
@@ -564,7 +603,7 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 
 ### 13.3 Migrations by release
 
-- **R1** `[Diana]`: `squads` + squad attachments (guild ⇄ space) — ✅ `014_squads.sql`; `identities` + `riot_account_links` and per-player privacy flags — DN-3, outstanding.
+- **R1** `[Diana]`: `squads` + squad attachments (guild ⇄ space) — ✅ `014_squads.sql`; per-player privacy — ✅ `018_summoner_privacy.sql` (DN-3, keyed on puuid so it needs no identity); `identities` + `identity_accounts` — DN-3, outstanding.
 - **R1** `[Meeps]`: `030_diana_events.sql` — the event log, `event_id` as primary key for idempotency. ✅ shipped (it landed as 030, not 029).
 - **R1** `[Meeps]`: `spaces`, `channels`, `memberships`, invite links — ✅ `032_spaces.sql`, `033_messages_channel_id_backfill.sql`; roles/permissions — ✅ `035_space_bans.sql`; consent + export records — MP-7, outstanding.
 - **R2** `[Diana]`: voice presence — ✅ `015_presence.sql` (`presence_events`, `presence_consent`); `sessions`, `session_participants`, `session_matches` — ✅ `016_sessions.sql` (DN-6, derived and rebuildable); `sessions.recap_emitted_at` — ✅ `017_session_recaps.sql` (§7.1, delivery bookkeeping rather than derived state).
