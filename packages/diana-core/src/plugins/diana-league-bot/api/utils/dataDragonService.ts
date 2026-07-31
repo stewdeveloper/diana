@@ -31,6 +31,28 @@ export const fetchLatestVersion = async (): Promise<string> => {
     return cachedLatestVersion || FALLBACK_DDRAGON_VERSION;
 };
 
+/**
+ * The picture of a profile icon.
+ *
+ * The League client's icon picker is a grid of images and shows an id nowhere,
+ * so "set your icon to #596" asks for something the player cannot look up. The
+ * `/link` handshake shows this instead and the number becomes a caption rather
+ * than an instruction.
+ *
+ * Data Dragon serves every icon at this path whether or not the account asking
+ * owns it, so a URL resolving is not evidence the icon is selectable — see
+ * `CHALLENGE_ICON_IDS`.
+ */
+export const buildProfileIconUrl = (
+    iconId: number,
+    version: string = cachedLatestVersion || FALLBACK_DDRAGON_VERSION
+): string =>
+    `https://ddragon.leagueoflegends.com/cdn/${version}/img/profileicon/${iconId}.png`;
+
+/** The same URL, having made sure the cached version is current. */
+export const fetchProfileIconUrl = async (iconId: number): Promise<string> =>
+    buildProfileIconUrl(iconId, await fetchLatestVersion());
+
 export const fetchChampionData = async () => {
     if (!championDataCache) {
         const version = await fetchLatestVersion();

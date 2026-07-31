@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, MessageFlags } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { Constants } from 'twisted';
 import type { SlashCommand } from '../../../../discord/commandTypes';
 import {
@@ -6,6 +6,7 @@ import {
     createTrustedLink,
     chooseChallengeIcon,
     createLolService,
+    fetchProfileIconUrl,
     getLinkChallenge,
     getGuildAllowsTrustedLinks,
     resolveIdentity,
@@ -201,10 +202,30 @@ export const linkCommand: SlashCommand = {
                     // The challenge is left open on purpose: this is nearly
                     // always "not changed yet", and the fix is to wait rather
                     // than to start over.
-                    await interaction.editReply(
-                        `Your icon is still #${outcome.actual}. Set it to **#${outcome.expected}**, ` +
-                            'wait a moment for Riot to catch up, then run `/link confirm` again.'
-                    );
+                    //
+                    // Shows the picture again for the same reason `/link start`
+                    // does - repeating a number they could not find the first
+                    // time is not a hint - and names the way out for somebody
+                    // who does not own it.
+                    const retry = new EmbedBuilder()
+                        .setTitle('Not changed yet')
+                        .setDescription(
+                            'Set your profile icon to the one shown here, give Riot a moment to catch up, ' +
+                                'then run `/link confirm` again.'
+                        )
+                        .setThumbnail(
+                            await fetchProfileIconUrl(outcome.expected)
+                        )
+                        .setColor(0xfaa61a)
+                        .addFields({
+                            name: 'Not in your collection?',
+                            value: 'Run `/link start` again and you will be asked for a different one.',
+                        })
+                        .setFooter({
+                            text: `Wanted #${outcome.expected} · yours is currently #${outcome.actual}`,
+                        });
+
+                    await interaction.editReply({ embeds: [retry] });
                     return;
                 }
 
@@ -313,12 +334,33 @@ export const linkCommand: SlashCommand = {
                 requiredIcon
             );
 
-            await interaction.editReply(
-                `To prove **${account.gameName}#${account.tagLine}** is yours:\n` +
-                    `1. Open the League client and change your profile icon to **#${requiredIcon}**.\n` +
-                    '2. Come back and run `/link confirm`.\n\n' +
-                    'You have 10 minutes, and you can change the icon back straight afterwards.'
-            );
+            // The picture, not the number. The client's icon picker is a grid of
+            // images and shows an id nowhere, so a message naming "#596" asks
+            // for something the player has no way to look up. The id stays as a
+            // caption because it is what `/link confirm` reports back.
+            const embed = new EmbedBuilder()
+                .setTitle('Prove this account is yours')
+                .setDescription(
+                    `Set your profile icon on **${account.gameName}#${account.tagLine}** ` +
+                        'to the one shown here, then run `/link confirm`.'
+                )
+                .setThumbnail(await fetchProfileIconUrl(requiredIcon))
+                .setColor(0x5865f2)
+                .addFields(
+                    {
+                        name: 'Where to find it',
+                        value: 'League client → your name, top right → the icon → **Available**. Match the picture; the client never shows icon numbers.',
+                    },
+                    {
+                        name: "Haven't got it?",
+                        value: 'Run `/link start` again for a different icon. These are the starter icons every account has, so one of them will be there.',
+                    }
+                )
+                .setFooter({
+                    text: `Icon #${requiredIcon} · 10 minutes · change it back straight afterwards`,
+                });
+
+            await interaction.editReply({ embeds: [embed] });
         } catch (error) {
             console.error('[/link] Error:', error);
             await interaction.editReply(

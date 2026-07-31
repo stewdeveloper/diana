@@ -59,6 +59,35 @@ class MockSlashCommandBuilder {
     }
 }
 
+class MockEmbedBuilder {
+    public data: Record<string, any> = { fields: [] };
+    setTitle(t: string) {
+        this.data.title = t;
+        return this;
+    }
+    setDescription(d: string) {
+        this.data.description = d;
+        return this;
+    }
+    setThumbnail(url: string) {
+        this.data.thumbnail = url;
+        return this;
+    }
+    setColor(c: number) {
+        this.data.color = c;
+        return this;
+    }
+    setFooter(f: Record<string, unknown>) {
+        this.data.footer = f;
+        return this;
+    }
+    addFields(...fields: Array<Record<string, any>>) {
+        const normalised = Array.isArray(fields[0]) ? fields[0] : fields;
+        this.data.fields = [...(this.data.fields || []), ...normalised];
+        return this;
+    }
+}
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
 const getAccountByRiotIdMock = jest.fn();
@@ -70,9 +99,11 @@ const getLinkChallengeMock = jest.fn();
 const getGuildAllowsTrustedLinksMock = jest.fn();
 const resolveIdentityMock = jest.fn();
 const verifyLinkChallengeMock = jest.fn();
+const fetchProfileIconUrlMock = jest.fn();
 
 jest.mock('discord.js', () => ({
     SlashCommandBuilder: MockSlashCommandBuilder,
+    EmbedBuilder: MockEmbedBuilder,
     MessageFlags: { Ephemeral: 64 },
 }));
 
@@ -103,6 +134,7 @@ jest.mock('diana-core', () => ({
     createLinkChallenge: createLinkChallengeMock,
     createTrustedLink: createTrustedLinkMock,
     chooseChallengeIcon: chooseChallengeIconMock,
+    fetchProfileIconUrl: fetchProfileIconUrlMock,
     getLinkChallenge: getLinkChallengeMock,
     getGuildAllowsTrustedLinks: getGuildAllowsTrustedLinksMock,
     resolveIdentity: resolveIdentityMock,
@@ -151,11 +183,30 @@ function makeInteraction(
     };
 }
 
-const replyText = (interaction: ReturnType<typeof makeInteraction>) =>
-    String(interaction.editReply.mock.calls[0][0]);
+/**
+ * Everything the reply says, whether it was sent as text or as an embed.
+ *
+ * `/link start` and the mismatch retry moved to embeds so they could show the
+ * icon rather than name a number the client never displays; the assertions are
+ * about the words either way.
+ */
+const replyText = (interaction: ReturnType<typeof makeInteraction>) => {
+    const arg = interaction.editReply.mock.calls[0][0] as any;
+    if (arg && typeof arg === 'object' && Array.isArray(arg.embeds)) {
+        return JSON.stringify(arg.embeds.map((e: any) => e.data ?? e));
+    }
+    return String(arg);
+};
+
+/** The embed a reply carried, for assertions about the picture itself. */
+const replyEmbed = (interaction: ReturnType<typeof makeInteraction>) =>
+    (interaction.editReply.mock.calls[0][0] as any).embeds[0].data;
 
 beforeEach(() => {
     jest.clearAllMocks();
+    fetchProfileIconUrlMock.mockImplementation(
+        async (id: number) => `https://ddragon.test/icon/${id}.png`
+    );
     getAccountByRiotIdMock.mockResolvedValue({
         puuid: 'puuid-1',
         gameName: 'Louis',
@@ -190,7 +241,7 @@ describe('linkCommand data', () => {
 });
 
 describe('/link start', () => {
-    it('opens a challenge naming an icon and telling them what to do', async () => {
+    it('opens a challenge and tells them what to do', async () => {
         const interaction = makeInteraction();
         await linkCommand.execute(interaction as any);
 
@@ -200,8 +251,35 @@ describe('/link start', () => {
             590
         );
         const text = replyText(interaction);
-        expect(text).toContain('#590');
         expect(text).toContain('/link confirm');
+    });
+
+    it('shows the icon rather than naming a number nothing displays', async () => {
+        // The whole bug this replaced: the client's picker is a grid of images
+        // and shows an id nowhere, so "set your icon to #590" asked for
+        // something the player had no way to look up.
+        const interaction = makeInteraction();
+        await linkCommand.execute(interaction as any);
+
+        const embed = replyEmbed(interaction);
+        expect(embed.thumbnail).toBe('https://ddragon.test/icon/590.png');
+        expect(fetchProfileIconUrlMock).toHaveBeenCalledWith(590);
+    });
+
+    it('says where to look, and what to do if they have not got it', async () => {
+        const interaction = makeInteraction();
+        await linkCommand.execute(interaction as any);
+
+        const text = replyText(interaction);
+        expect(text).toContain('Available');
+        // The escape hatch for an icon the account does not own.
+        expect(text).toContain('/link start');
+    });
+
+    it('keeps the number as a caption, since confirm reports it back', async () => {
+        const interaction = makeInteraction();
+        await linkCommand.execute(interaction as any);
+        expect(JSON.stringify(replyEmbed(interaction).footer)).toContain('590');
     });
 
     it('excludes the icon they already have', async () => {
@@ -338,9 +416,42 @@ describe('/link confirm', () => {
         await linkCommand.execute(interaction as any);
 
         const text = replyText(interaction);
-        expect(text).toContain('#590');
         expect(text).toContain('/link confirm');
-        expect(text).not.toContain('/link start');
+        // The picture again, not the number they could not find the first time.
+        expect(replyEmbed(interaction).thumbnail).toBe(
+            'https://ddragon.test/icon/590.png'
+        );
+        // Both figures are reported, so "yours is still the old one" is legible.
+        expect(JSON.stringify(replyEmbed(interaction).footer)).toContain('590');
+        expect(JSON.stringify(replyEmbed(interaction).footer)).toContain('12');
+    });
+
+    it('offers a re-roll on mismatch without making it the first instruction', async () => {
+        // Waiting is nearly always the fix, so the headline stays "not changed
+        // yet". But a player who cannot select that icon at all has to be told
+        // the way out, and previously was not.
+        getLinkChallengeMock.mockResolvedValue({
+            puuid: 'puuid-1',
+            game_name: 'Louis',
+            tag_line: 'EUW',
+            region: 'EU_WEST',
+            required_icon: 590,
+        });
+        getSummonerByPUUIDMock.mockResolvedValue({ profileIconId: 12 });
+        verifyLinkChallengeMock.mockResolvedValue({
+            ok: false,
+            reason: 'icon_mismatch',
+            expected: 590,
+            actual: 12,
+        });
+
+        const interaction = makeInteraction({ subcommand: 'confirm' });
+        await linkCommand.execute(interaction as any);
+
+        const embed = replyEmbed(interaction);
+        expect(embed.description).toContain('/link confirm');
+        expect(embed.description).not.toContain('/link start');
+        expect(JSON.stringify(embed.fields)).toContain('/link start');
     });
 
     it('says so when there is no challenge open', async () => {
