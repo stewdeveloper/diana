@@ -1,4 +1,5 @@
 import { db } from '../api/utils/db';
+import { notHiddenPredicate } from '../../../core/privacy/privacyService';
 import {
     buildCompetitiveSqlFilter,
     DEFAULT_COMPETITIVE_SCOPE,
@@ -83,6 +84,20 @@ export interface InterStatsOptions {
      * Arena is excluded either way.
      */
     scope?: CompetitiveScope;
+    /**
+     * Exclude players who opted out of rankings (DN-3).
+     *
+     * **Defaults to `!targetPuuid`**, which is the whole rule in one expression:
+     * opting out hides you from surfaces that rank you against other people, not
+     * from a lookup where somebody typed your name. Every ranking surface here
+     * omits `targetPuuid` and every direct lookup sets it, so the default is
+     * correct for all six callers without any of them saying anything.
+     *
+     * Set it explicitly to override - `true` to filter a named lookup anyway,
+     * `false` for an internal reader that must see everyone (an export, say,
+     * where hiding the subject's own data would be absurd).
+     */
+    respectPrivacy?: boolean;
 }
 
 export function parseParticipants(
@@ -112,7 +127,7 @@ function buildDisplayName(gameName: string, tagLine: string) {
 
 export async function getInterCandidatesSince(
     sinceTimestamp: number,
-    { targetPuuid, squadId, scope }: InterStatsOptions = {}
+    { targetPuuid, squadId, scope, respectPrivacy }: InterStatsOptions = {}
 ): Promise<InterCandidate[]> {
     const params: Array<string | number> = [sinceTimestamp];
 
@@ -121,6 +136,13 @@ export async function getInterCandidatesSince(
         params.push(squadId);
         squadJoin = `JOIN squad_summoners ss ON ss.puuid = s.puuid AND ss.squad_id = $${params.length}`;
     }
+
+    // See `respectPrivacy` on InterStatsOptions: absent means "filter unless the
+    // caller named somebody".
+    const privacyFilter =
+        (respectPrivacy ?? !targetPuuid)
+            ? ` AND ${notHiddenPredicate('s."puuid"')}`
+            : '';
 
     let query = `
         SELECT
@@ -142,6 +164,7 @@ export async function getInterCandidatesSince(
         WHERE md."gameCreation" IS NOT NULL
           AND md."gameCreation" >= $1
           ${buildCompetitiveSqlFilter('md', scope ?? DEFAULT_COMPETITIVE_SCOPE)}
+          ${privacyFilter}
     `;
 
     if (targetPuuid) {

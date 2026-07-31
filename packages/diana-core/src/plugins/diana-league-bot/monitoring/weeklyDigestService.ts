@@ -11,6 +11,7 @@ import {
     buildCompetitiveSqlFilter,
     type CompetitiveScope,
 } from '../utils/queueClassification';
+import { notHiddenPredicate } from '../../../core/privacy/privacyService';
 import { fetchRankHistory } from '../api/summoners/summonerService';
 import { getTotalPoints } from '../api/utils/rankService';
 import {
@@ -44,12 +45,19 @@ async function fetchWeeklyScoredGames(
     // match_details only holds rows for *entry* players. Joining would silently
     // drop a summoner added to the squad after a match; EXISTS only ever
     // removes Arena/non-ranked matches, so it is purely additive.
+    //
+    // The privacy filter is repeated here rather than inherited from
+    // `getInterCandidatesSince`, because this is a *second* read path: the
+    // digest's headline figures come from the candidates, but its best and worst
+    // game come from here. Filtering only the first would have left an
+    // opted-out player named as the week's best game.
     const result = await db.query(
         `SELECT ms."matchId", ms."puuid", ms."score", s."gameName", s."tagLine"
          FROM match_scores ms
          JOIN squad_summoners ss ON ss.puuid = ms."puuid" AND ss.squad_id = $1
          JOIN summoners s ON s.puuid = ms."puuid"
          WHERE ms."createdAt" >= to_timestamp($2 / 1000.0)
+           AND ${notHiddenPredicate('ms."puuid"')}
            AND EXISTS (
                SELECT 1 FROM match_details md
                WHERE md."matchId" = ms."matchId"
