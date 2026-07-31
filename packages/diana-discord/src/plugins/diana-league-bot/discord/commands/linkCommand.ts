@@ -165,8 +165,18 @@ export const linkCommand: SlashCommand = {
             if (subcommand === 'confirm') {
                 const challenge = await getLinkChallenge(discordUserId);
                 if (!challenge) {
+                    // The sweep may have finished it already, which is the whole
+                    // point of the sweep - so "no link in progress" would be a
+                    // confusing answer to somebody whose link just succeeded
+                    // without them.
+                    const identity = await resolveIdentity(
+                        'discord_user',
+                        discordUserId
+                    );
                     await interaction.editReply(
-                        'You have no link in progress, or it expired. Start again with `/link start`.'
+                        identity.puuids.length > 0
+                            ? 'Already done — I finished that link for you when Riot caught up. `/link status` shows what is linked.'
+                            : 'You have no link in progress, or it expired. Start again with `/link start`.'
                     );
                     return;
                 }
@@ -208,21 +218,30 @@ export const linkCommand: SlashCommand = {
                     // time is not a hint - and names the way out for somebody
                     // who does not own it.
                     const retry = new EmbedBuilder()
-                        .setTitle('Not changed yet')
+                        .setTitle("Riot hasn't caught up yet")
                         .setDescription(
-                            'Set your profile icon to the one shown here, give Riot a moment to catch up, ' +
-                                'then run `/link confirm` again.'
+                            'Set your profile icon to the one shown here if you have not already. ' +
+                                "If you have, this is Riot's end being slow — nothing is wrong."
                         )
                         .setThumbnail(
                             await fetchProfileIconUrl(outcome.expected)
                         )
                         .setColor(0xfaa61a)
-                        .addFields({
-                            name: 'Not in your collection?',
-                            value: 'Run `/link start` again and you will be asked for a different one.',
-                        })
+                        .addFields(
+                            {
+                                // The line that stops somebody sitting there
+                                // running this every thirty seconds against a
+                                // cache that updates on its own schedule.
+                                name: 'You can walk away',
+                                value: "I keep checking in the background and I'll DM you the moment it goes through. `/link confirm` just skips the wait if you would rather watch.",
+                            },
+                            {
+                                name: 'Not in your collection?',
+                                value: 'Run `/link start` again and you will be asked for a different one.',
+                            }
+                        )
                         .setFooter({
-                            text: `Wanted #${outcome.expected} · yours is currently #${outcome.actual}`,
+                            text: `Wanted #${outcome.expected} · Riot still reports #${outcome.actual}`,
                         });
 
                     await interaction.editReply({ embeds: [retry] });
@@ -342,7 +361,7 @@ export const linkCommand: SlashCommand = {
                 .setTitle('Prove this account is yours')
                 .setDescription(
                     `Set your profile icon on **${account.gameName}#${account.tagLine}** ` +
-                        'to the one shown here, then run `/link confirm`.'
+                        'to the one shown here. Then you can close Discord — I will take it from there.'
                 )
                 .setThumbnail(await fetchProfileIconUrl(requiredIcon))
                 .setColor(0x5865f2)
@@ -352,12 +371,20 @@ export const linkCommand: SlashCommand = {
                         value: 'League client → your name, top right → the icon → **Available**. Match the picture; the client never shows icon numbers.',
                     },
                     {
+                        // Said up front rather than discovered by running
+                        // `/link confirm` into a wall: Riot's cache is slower
+                        // than a person, and somebody who does not know that
+                        // reads the delay as the feature being broken.
+                        name: 'It will not be instant',
+                        value: "Riot takes a while to report an icon change — often much longer than you would expect. I keep checking and I'll DM you when it goes through. `/link confirm` skips the wait if you would rather watch.",
+                    },
+                    {
                         name: "Haven't got it?",
                         value: 'Run `/link start` again for a different icon. These are the starter icons every account has, so one of them will be there.',
                     }
                 )
                 .setFooter({
-                    text: `Icon #${requiredIcon} · 10 minutes · change it back straight afterwards`,
+                    text: `Icon #${requiredIcon} · you have 24 hours · change it back once it goes through`,
                 });
 
             await interaction.editReply({ embeds: [embed] });

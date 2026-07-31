@@ -449,9 +449,55 @@ describe('/link confirm', () => {
         await linkCommand.execute(interaction as any);
 
         const embed = replyEmbed(interaction);
-        expect(embed.description).toContain('/link confirm');
+        // The headline explains the delay; the fields say what to do about it.
+        expect(embed.title).toMatch(/caught up/i);
         expect(embed.description).not.toContain('/link start');
         expect(JSON.stringify(embed.fields)).toContain('/link start');
+        expect(JSON.stringify(embed.fields)).toContain('/link confirm');
+    });
+
+    it('tells them they can stop retrying, which is the actual fix', async () => {
+        // The bug: Riot's summoner-v4 cache is slower than a person, so a
+        // player who does not know that reads the delay as the feature being
+        // broken and sits there running /link confirm at it.
+        getLinkChallengeMock.mockResolvedValue({
+            puuid: 'puuid-1',
+            game_name: 'Louis',
+            tag_line: 'EUW',
+            region: 'EU_WEST',
+            required_icon: 590,
+        });
+        getSummonerByPUUIDMock.mockResolvedValue({ profileIconId: 12 });
+        verifyLinkChallengeMock.mockResolvedValue({
+            ok: false,
+            reason: 'icon_mismatch',
+            expected: 590,
+            actual: 12,
+        });
+
+        const interaction = makeInteraction({ subcommand: 'confirm' });
+        await linkCommand.execute(interaction as any);
+
+        const text = replyText(interaction);
+        expect(text).toMatch(/DM you/i);
+        expect(text).toMatch(/walk away/i);
+    });
+
+    it('says the sweep already did it, rather than "no link in progress"', async () => {
+        // The whole point of the background sweep is that it completes links
+        // without the player. Telling somebody whose link just succeeded that
+        // they have none in progress would be the most confusing possible
+        // answer.
+        getLinkChallengeMock.mockResolvedValue(null);
+        resolveIdentityMock.mockResolvedValue({
+            ...EMPTY_IDENTITY,
+            puuids: ['puuid-1'],
+        });
+
+        const interaction = makeInteraction({ subcommand: 'confirm' });
+        await linkCommand.execute(interaction as any);
+
+        expect(replyText(interaction)).toMatch(/Already done/i);
     });
 
     it('says so when there is no challenge open', async () => {

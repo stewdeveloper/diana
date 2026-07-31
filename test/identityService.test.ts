@@ -57,6 +57,23 @@ beforeEach(() => {
     queryMock.mockReset();
 });
 
+describe('CHALLENGE_TTL_MS', () => {
+    it('is sized for Riot\u2019s cache, not for how fast a person clicks', () => {
+        // The bug it fixes: ten minutes was chosen for how long somebody takes
+        // to alt-tab and change an icon. What has to fit inside the window is
+        // how long summoner-v4 takes to *report* the change, which is reliably
+        // longer than that \u2014 so the handshake expired before it could
+        // possibly have succeeded.
+        expect(CHALLENGE_TTL_MS).toBeGreaterThanOrEqual(60 * 60 * 1000);
+    });
+
+    it('still ends, so an abandoned handshake is not open forever', () => {
+        // The cost of a long window is coincidence: the account's real owner
+        // independently setting the exact icon being asked for.
+        expect(CHALLENGE_TTL_MS).toBeLessThanOrEqual(7 * 24 * 60 * 60 * 1000);
+    });
+});
+
 describe('CHALLENGE_ICON_IDS', () => {
     it('only names icons every account can actually select', () => {
         // The bug this pins: the set was 588-597, described in the source as
