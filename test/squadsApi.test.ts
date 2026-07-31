@@ -18,12 +18,17 @@ jest.mock('../packages/diana-core/src/core/squads/squadService', () => {
 
 import type { Request, Response } from 'express';
 import * as squadService from '../packages/diana-core/src/core/squads/squadService';
+import express from 'express';
+import type { AddressInfo } from 'net';
+import type { Server } from 'http';
 import {
     getSquadByAttachment,
     getSquadById,
     getSquadRoster,
     createSquadAttachment,
     deleteSquadAttachment,
+    meepsSecretOrSkip,
+    squadsMachineRouter,
 } from '../packages/diana-core/src/core/api/squadsApi';
 
 const getSquadMock = squadService.getSquad as jest.Mock;
@@ -292,5 +297,158 @@ describe('DELETE /api/squads/:squadId/attachments/:kind/:externalId', () => {
 
         expect(res.status).toHaveBeenCalledWith(404);
         expect(detachAttachmentMock).not.toHaveBeenCalled();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Machine access (Meeps)
+// ---------------------------------------------------------------------------
+//
+// `by-attachment` is the only squad route a server may call, and it may only
+// read. These cover the gate itself and — because the fall-through is the part
+// that is easy to get wrong and impossible to see from a unit test — the real
+// mounting order, over a real socket.
+
+describe('meepsSecretOrSkip', () => {
+    const ORIGINAL = process.env.MEEPS_INBOUND_SECRET;
+
+    afterEach(() => {
+        if (ORIGINAL === undefined) delete process.env.MEEPS_INBOUND_SECRET;
+        else process.env.MEEPS_INBOUND_SECRET = ORIGINAL;
+    });
+
+    function reqWith(headers: Record<string, string>): Request {
+        return { headers } as unknown as Request;
+    }
+
+    it('hands a request carrying no secret to the next router', () => {
+        // The dashboard calls this path too. Answering 401 because it did not
+        // send a machine credential it has never had would be a regression.
+        process.env.MEEPS_INBOUND_SECRET = 'shh';
+        const next = jest.fn();
+        const res = makeRes();
+
+        meepsSecretOrSkip(reqWith({}), res, next);
+
+        expect(next).toHaveBeenCalledWith('router');
+        expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it('admits a correct secret', () => {
+        process.env.MEEPS_INBOUND_SECRET = 'shh';
+        const next = jest.fn();
+        const res = makeRes();
+
+        meepsSecretOrSkip(reqWith({ 'x-meeps-secret': 'shh' }), res, next);
+
+        expect(next).toHaveBeenCalledWith();
+        expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it('401s a wrong secret rather than falling through to the JWT router', () => {
+        // Falling through would turn a mistyped secret into "Authentication
+        // required", which sends the operator looking for a dashboard problem.
+        process.env.MEEPS_INBOUND_SECRET = 'shh';
+        const next = jest.fn();
+        const res = makeRes();
+
+        meepsSecretOrSkip(reqWith({ 'x-meeps-secret': 'wrong' }), res, next);
+
+        expect(res.status).toHaveBeenCalledWith(401);
+        expect(next).not.toHaveBeenCalled();
+    });
+
+    it('503s when Diana has no secret configured', () => {
+        delete process.env.MEEPS_INBOUND_SECRET;
+        const next = jest.fn();
+        const res = makeRes();
+
+        meepsSecretOrSkip(reqWith({ 'x-meeps-secret': 'anything' }), res, next);
+
+        expect(res.status).toHaveBeenCalledWith(503);
+        expect(next).not.toHaveBeenCalled();
+    });
+});
+
+describe('squadsMachineRouter mounting', () => {
+    const ORIGINAL = process.env.MEEPS_INBOUND_SECRET;
+    let server: Server;
+    let origin: string;
+    /** Stands in for the JWT-guarded router mounted after the machine one. */
+    const dashboardReached = jest.fn();
+
+    beforeAll(async () => {
+        process.env.MEEPS_INBOUND_SECRET = 'shh';
+
+        const app = express();
+        app.use('/api/squads', squadsMachineRouter);
+        app.use('/api/squads', (_req, res) => {
+            dashboardReached();
+            res.status(401).json({ error: 'Authentication required' });
+        });
+
+        server = app.listen(0);
+        await new Promise((resolve) => server.once('listening', resolve));
+        origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    });
+
+    afterAll(async () => {
+        if (ORIGINAL === undefined) delete process.env.MEEPS_INBOUND_SECRET;
+        else process.env.MEEPS_INBOUND_SECRET = ORIGINAL;
+        await new Promise((resolve) => server.close(resolve));
+    });
+
+    const get = (path: string, headers: Record<string, string> = {}) =>
+        fetch(origin + path, { headers });
+
+    it('serves by-attachment to a caller holding the secret', async () => {
+        getSquadIdForAttachmentMock.mockResolvedValue('sq1');
+        getSquadMock.mockResolvedValue({ squad_id: 'sq1', name: 'Squad' });
+
+        const res = await get('/api/squads/by-attachment/meeps_space/space-1', {
+            'x-meeps-secret': 'shh',
+        });
+
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ squad_id: 'sq1', name: 'Squad' });
+        expect(dashboardReached).not.toHaveBeenCalled();
+    });
+
+    it('falls through to the authenticated router without the secret', async () => {
+        // This is the assertion that proves `next(\'router\')` really exits the
+        // machine router rather than skipping to the next route inside it.
+        const res = await get('/api/squads/by-attachment/meeps_space/space-1');
+
+        expect(res.status).toBe(401);
+        expect(dashboardReached).toHaveBeenCalled();
+        expect(getSquadIdForAttachmentMock).not.toHaveBeenCalled();
+    });
+
+    it('never lets the secret reach a write', async () => {
+        // The machine router claims one GET. Everything that mutates an
+        // attachment must land on the dashboard router even with a valid secret.
+        const res = await fetch(origin + '/api/squads/sq1/attachments', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-meeps-secret': 'shh',
+            },
+            body: JSON.stringify({
+                kind: 'meeps_space',
+                externalId: 'space-2',
+            }),
+        });
+
+        expect(res.status).toBe(401);
+        expect(dashboardReached).toHaveBeenCalled();
+        expect(attachToSquadMock).not.toHaveBeenCalled();
+    });
+
+    it('does not open the roster or the squad record to the secret', async () => {
+        for (const path of ['/api/squads/sq1', '/api/squads/sq1/summoners']) {
+            const res = await get(path, { 'x-meeps-secret': 'shh' });
+            expect(res.status).toBe(401);
+        }
+        expect(getSummonersForSquadMock).not.toHaveBeenCalled();
     });
 });

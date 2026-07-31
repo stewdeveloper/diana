@@ -10,6 +10,7 @@ import {
     loadPlugin,
     pluginsApiRouter,
     squadsApiRouter,
+    squadsMachineRouter,
     presenceApiRouter,
     sessionsApiRouter,
     authApiRouter,
@@ -122,6 +123,13 @@ async function main() {
 
     // Protected routes (require authentication)
     app.use('/api/plugins', requireAuth, pluginsApiRouter);
+    // One squad read is reachable with the Meeps shared secret instead of the
+    // dashboard JWT: `by-attachment`, which is how Meeps learns the squad behind
+    // one of its spaces. It is mounted first and falls through to the JWT router
+    // below for any caller that does not present the secret — see
+    // `meepsSecretOrSkip`. Order matters; swapping these two makes the machine
+    // route unreachable again.
+    app.use('/api/squads', squadsMachineRouter);
     app.use('/api/squads', requireAuth, squadsApiRouter);
     // Sessions (DN-6) sit behind the dashboard JWT, not the Meeps secret: a
     // session records who was at their computer and with whom, which is personal
