@@ -565,7 +565,7 @@ Carried forward from the old roadmap. Still correct, and still the sharpest cons
 | **Every joint feature in §7 and §8.1/§8.3**                                    | **0** - entirely stored data                                  |
 | Session Recap, Session Curve, Squad Wrapped, Squad Draft, Calls                | **0**                                                         |
 | Shipped: richer embeds, MVP, leaderboards, digest, streaks, compare, sparkline | 0                                                             |
-| `/livegame` (basic, shipped)                                                   | 1 per use                                                     |
+| `/livegame` (basic, shipped)                                                   | 1 per use - from Discord _or_ Meeps; see below                |
 | Free rotation (shipped)                                                        | 1 per week                                                    |
 | `/link` icon verification (DN-3)                                               | ~2 per link, plus 1 per open handshake per 10 min - see below |
 | LCU presence (§8.2)                                                            | 0 - local client                                              |
@@ -580,6 +580,14 @@ Carried forward from the old roadmap. Still correct, and still the sharpest cons
 > handshakes every ten minutes and DMs the player when one completes, because
 > the alternative is asking somebody to re-run `/link confirm` at an unknowable
 > moment. The ceiling is "people mid-link right now", one per Discord user.
+
+> **Commands run from Meeps spend the same budget.** Meeps can now invoke ten of
+> Diana's commands (`/api/commands`), which means `/livegame` has a second entry
+> point. Discord's own 3s per-user cooldown does not cover it - a Meeps caller
+> must not consume a Discord user's budget - so the HTTP path carries its own
+> 10s cooldown keyed per space, because the thing being protected is the Riot
+> quota and that is shared. The other nine read only stored data and are
+> `Rate: zero` from either surface.
 
 **That every differentiated feature is `Rate: zero` is a strategic fact, not a footnote.** The product's moat is built on data already in Postgres. Riot rate limits do not constrain the roadmap; they constrain only the live-presence layer, which has a local-client path that avoids them entirely.
 
