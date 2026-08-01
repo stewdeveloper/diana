@@ -13,6 +13,7 @@
 import { db } from '../../plugins/diana-league-bot/api/utils/db';
 import {
     buildSessionEventId,
+    DIANA_EVENT_SCHEMA_VERSION,
     type SessionCompletedEvent,
     type SessionLowPoint,
     type SessionMatchSummary,
@@ -285,6 +286,7 @@ export function buildSessionCompletedEvent(
     const endedAt = toIso(session.ended_at);
 
     return {
+        schemaVersion: DIANA_EVENT_SCHEMA_VERSION,
         eventId: buildSessionEventId(session.squad_id, session.started_at),
         type: 'session.completed',
         // When the night ended, not when the sweep noticed - which is up to a

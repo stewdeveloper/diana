@@ -1,6 +1,10 @@
 import { db } from '../api/utils/db';
 import type { EventAdapter, WeeklyDigestStats } from '../../../core/eventTypes';
-import { buildPeriodicEventId, toIsoWeek } from '../../../core/eventTypes';
+import {
+    buildPeriodicEventId,
+    DIANA_EVENT_SCHEMA_VERSION,
+    toIsoWeek,
+} from '../../../core/eventTypes';
 import {
     getAllGuildConfigs,
     getNotificationPref,
@@ -346,6 +350,7 @@ export function createWeeklyDigestTick(
                 const squadId = await getSquadIdForGuild(guild.guild_id);
                 if (squadId) {
                     await eventAdapter?.emit({
+                        schemaVersion: DIANA_EVENT_SCHEMA_VERSION,
                         eventId: buildPeriodicEventId(
                             'digest.weekly',
                             squadId,

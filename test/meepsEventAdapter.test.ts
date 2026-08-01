@@ -2,6 +2,7 @@ import type {
     DianaEvent,
     EventAdapter,
 } from '../packages/diana-core/src/core/eventTypes';
+import { DIANA_EVENT_SCHEMA_VERSION } from '../packages/diana-core/src/core/eventTypes';
 
 /**
  * The event transport's contract:
@@ -12,6 +13,7 @@ import type {
  */
 
 const EVENT: DianaEvent = {
+    schemaVersion: DIANA_EVENT_SCHEMA_VERSION,
     eventId: 'match.completed:EUW1_1:puuid-1',
     type: 'match.completed',
     occurredAt: '2026-07-25T12:00:00.000Z',
@@ -98,6 +100,7 @@ describe('createMeepsEventAdapter', () => {
         expect(init.method).toBe('POST');
         expect(init.headers['x-diana-secret']).toBe('shhh');
         expect(JSON.parse(init.body)).toMatchObject({
+            schemaVersion: DIANA_EVENT_SCHEMA_VERSION,
             eventId: EVENT.eventId,
             type: 'match.completed',
         });

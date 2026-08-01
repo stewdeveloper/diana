@@ -19,16 +19,35 @@
  * do not hand-assemble ids.
  */
 
-export type DianaEventType =
-    | 'match.completed'
-    | 'rank.changed'
-    | 'streak'
-    | 'milestone'
-    | 'digest.weekly'
-    | 'rotation.weekly'
-    | 'session.completed';
+/**
+ * Version of the wire envelope understood by Diana and Meeps.
+ *
+ * Bump this only for a breaking contract change and follow the rollout order in
+ * `contracts/diana-event/README.md`.
+ */
+export const DIANA_EVENT_SCHEMA_VERSION = 1 as const;
+
+/**
+ * Runtime and compile-time source of truth for event discriminators.
+ *
+ * The shared artifact consumed by Meeps is generated from this declaration;
+ * never add a second hand-maintained allowlist.
+ */
+export const DIANA_EVENT_TYPES = [
+    'match.completed',
+    'rank.changed',
+    'streak',
+    'milestone',
+    'digest.weekly',
+    'rotation.weekly',
+    'session.completed',
+] as const;
+
+export type DianaEventType = (typeof DIANA_EVENT_TYPES)[number];
 
 export interface DianaEventBase {
+    /** Versioned wire envelope shared with Meeps. */
+    schemaVersion: typeof DIANA_EVENT_SCHEMA_VERSION;
     /** Deterministic idempotency key. See the builders below. */
     eventId: string;
     type: DianaEventType;
