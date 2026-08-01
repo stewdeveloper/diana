@@ -109,7 +109,7 @@ Three constraints that shape the sequencing below rather than being discovered b
 
 ### 4.1 Riot developer policy
 
-- **Monetisation requires registration** on the Developer Portal with status **Approved or Acknowledged**. Approval has lead time. → **DN-8, started week 1.**
+- **Monetisation requires registration** on the Developer Portal with status **Approved or Acknowledged**. → Handled outside this roadmap; **DN-8, which tracked it as a deliverable, is dropped** (see §6).
 - **A free tier for players is mandatory.** → Diana-on-Discord stays free forever. This is not generosity; it is the licence condition.
 - **Paid content must be transformative** - new information, insight or understanding. Reselling match history fails. AI scores, session analytics and squad synergy modelling pass comfortably. Write the argument down for the submission; it doubles as marketing copy.
 - **🚨 "Your product cannot feature betting or gambling functionality."** Stated as a condition of monetisation. → The old roadmap's §6.3 betting feature is **deleted**, not deferred. Replacement in §8, _Calls_.
@@ -211,18 +211,34 @@ Scheduled in R3 rather than R1 because it is not a blocker on charging money - b
 
 **Target: 8–10 weeks. Goal: a second group can pay and successfully onboard without your help.**
 
-> **Do not charge anyone before DN-8 completes.** Registration has lead time; start it in week one, in parallel with everything else.
+> **The constraints in §4.1 still bind; the work item tracking them does not.**
+> A free player tier, transformative paid content, no wagering and one product
+> per production key are licence conditions, not roadmap tasks — they are
+> satisfied by how the product is built rather than by a deliverable somebody
+> ticks off. See the DN-8 note below.
 
 ### Diana track
 
-| ID          | Item                                                                                             | Effort       | Acceptance                                                                                                                                                                                                                                               |
-| ----------- | ------------------------------------------------------------------------------------------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ✅ **DN-1** | Typed event bus + `EventAdapter`, with at-least-once delivery and deterministic idempotency keys | M            | **Shipped.** `EventAdapter` ships alongside `MessageAdapter`; Discord output byte-identical (13 snapshots in `discordPayloadRegression.test.ts`); Meeps stores events as rows in `diana_events`; `event_id` is the primary key, so redelivery is a no-op |
-| ✅ **DN-2** | `squad_id` scope, portable across Discord guild and Meeps space                                  | S–M          | **Shipped.** Migration 014 (`squads`, `squad_attachments`, `squad_summoners`); every roster read scoped to the squad; events carry `squadId`; two-squad isolation tested in `interStats.test.ts` and `weeklyDigestService.test.ts`                       |
-| ✅ **DN-3** | Riot account linking (RSO if granted, icon handshake otherwise) + per-player privacy opt-out     | M            | **Shipped.** Migration 018 (`summoner_privacy`) + 019 (`identities`, `identity_accounts`); opt-out filtered at all three read paths; `/link` icon handshake, `/unlink`, `/privacy`. See §6.1                                                             |
-| ⬜ **DN-8** | Riot compliance package                                                                          | S, long lead | Product registered; status Approved or Acknowledged; single production key; transformativeness statement written; free tier defined                                                                                                                      |
-| ⬜ **DN-4** | Betting removed from the roadmap                                                                 | XS           | No wagering design or code path exists anywhere. **Note: no betting code was ever written** - this is a documentation deletion, already done by this file's existence                                                                                    |
-| ~~DN-10~~   | ~~Migration tooling hardening~~ — **dropped, see below**                                         | —            | Not needed                                                                                                                                                                                                                                               |
+| ID          | Item                                                                                             | Effort | Acceptance                                                                                                                                                                                                                                               |
+| ----------- | ------------------------------------------------------------------------------------------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ✅ **DN-1** | Typed event bus + `EventAdapter`, with at-least-once delivery and deterministic idempotency keys | M      | **Shipped.** `EventAdapter` ships alongside `MessageAdapter`; Discord output byte-identical (13 snapshots in `discordPayloadRegression.test.ts`); Meeps stores events as rows in `diana_events`; `event_id` is the primary key, so redelivery is a no-op |
+| ✅ **DN-2** | `squad_id` scope, portable across Discord guild and Meeps space                                  | S–M    | **Shipped.** Migration 014 (`squads`, `squad_attachments`, `squad_summoners`); every roster read scoped to the squad; events carry `squadId`; two-squad isolation tested in `interStats.test.ts` and `weeklyDigestService.test.ts`                       |
+| ✅ **DN-3** | Riot account linking (RSO if granted, icon handshake otherwise) + per-player privacy opt-out     | M      | **Shipped.** Migration 018 (`summoner_privacy`) + 019 (`identities`, `identity_accounts`); opt-out filtered at all three read paths; `/link` icon handshake, `/unlink`, `/privacy`. See §6.1                                                             |
+| ~~DN-8~~    | ~~Riot compliance package~~ — **dropped, see below**                                             | —      | Not needed                                                                                                                                                                                                                                               |
+| ⬜ **DN-4** | Betting removed from the roadmap                                                                 | XS     | No wagering design or code path exists anywhere. **Note: no betting code was ever written** - this is a documentation deletion, already done by this file's existence                                                                                    |
+| ~~DN-10~~   | ~~Migration tooling hardening~~ — **dropped, see below**                                         | —      | Not needed                                                                                                                                                                                                                                               |
+
+> **DN-8 has been dropped as unnecessary** (decision, 2026-08-01). It tracked
+> assembling a Riot compliance package as a deliverable, and that is not work
+> this roadmap needs to schedule. The §4.1 constraints it was written to satisfy
+> are unchanged and still bind — they are properties of the product, checked
+> where they are implemented rather than in a package: the free Discord tier is
+> §4.1's licence condition and is how Diana already ships, the transformativeness
+> argument is the product thesis in §2, betting is deleted rather than deferred
+> (DN-4), and one-product-per-key is §5.4.
+>
+> **What this does not do is make the constraints optional.** If the monetisation
+> position ever changes, §4.1 is the section to re-read, not this row.
 
 > **DN-10 was written on a false premise and has been dropped.** `db/migrate.sh`
 > already maintains a `schema_migration_diana` versions table keyed on filename,
@@ -328,11 +344,18 @@ so declaring it would have put self-service behind Manage Server too.
 
 ### Joint
 
-| Item                               | Notes                                                                                                                                                                                  |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ⬜ Event contract freeze           | The `DianaEvent` union is a shared artifact. Version it, own it in one place, and regression-test both sides before either team builds on it                                           |
-| ⬜ Discord-output regression suite | The single highest-risk part of DN-1 is silently changing what the free bot posts. Snapshot the current embeds first                                                                   |
-| ⬜ Pilot recruitment               | Onboard **three friend groups who are not you** in weeks 8–10. This is the most informative item in the plan and the easiest to skip. Watch where onboarding breaks. Do not charge yet |
+| Item                               | Notes                                                                                                                                                             |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ⬜ Event contract freeze           | The `DianaEvent` union is a shared artifact. Version it, own it in one place, and regression-test both sides before either team builds on it. Tracked as **#186** |
+| ✅ Discord-output regression suite | **Shipped.** `test/discordPayloadRegression.test.ts` holds 13 committed snapshots of the free bot's embeds and fails on any byte that moves                       |
+
+> **Pilot recruitment has moved to R4.** It was written as an R1 item on the
+> assumption that R1 ended with charging people. It does not: the acceptance
+> line at the top of this section is _"a second group can pay and successfully
+> onboard without your help"_, which is a statement about the software being
+> ready, not about anybody having been recruited. Onboarding real groups is the
+> first thing that happens **after** the product is worth onboarding them to —
+> see §8A.
 
 ---
 
@@ -544,6 +567,34 @@ MP-9 matters because the event contract is shared with a 40-suite TypeScript cod
 
 ---
 
+## 8A. R4 - "Proven"
+
+**Target: after R3. Goal: the product is in the hands of groups who are not you.**
+
+> **Why this is §8A and not §9.** The sections after it are referenced sixteen
+> times inside this file and by name in shipped source — `linkCommand.ts` and
+> `commandApi.ts` both cite "roadmap §9" for the rate budget. Renumbering would
+> silently invalidate every one of those comments, which is a worse outcome than
+> a lettered section.
+
+| Item                 | Notes                                                                                                                                                                                                    |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ⬜ Pilot recruitment | Onboard **three friend groups who are not you**. The most informative item in the plan and the easiest to skip. Watch where onboarding breaks; do not fix it in advance of watching. Tracked as **#157** |
+
+**Why it moved out of R1.** It was written there on the assumption that R1 ended
+with charging people, and R1's own acceptance line says otherwise — _"a second
+group can pay and successfully onboard without your help"_ is a claim about the
+software, not about anybody having been recruited. Recruiting real groups before
+the differentiated features exist tests the wrong thing: they would be evaluating
+a Discord bot with a chat client attached, which is not the product.
+
+**What R4 is actually for.** Everything before it is built on one group's
+behaviour — yours. R4 is the first point at which the assumptions underneath §2
+meet somebody who did not write them. The validation gates in §12 are the
+questions it answers, and three of the five cannot be answered any other way.
+
+---
+
 ## 9. Riot rate budget
 
 Carried forward from the old roadmap. Still correct, and still the sharpest constraint analysis in either document.
@@ -554,7 +605,7 @@ Carried forward from the old roadmap. Still correct, and still the sharpest cons
 | Personal                     | Same limits, permanent               | What most **self-hosters** run - no increases possible |
 | Production (this deployment) | **Per-method** - 39 methods approved | See note below                                         |
 
-> **⚠️ `docs/access.md` is missing.** The old roadmap cites it six times as the authoritative record of the production key's per-method limits, but it has never been committed to this repository (`git log --all -- docs/access.md` is empty). The figures below are carried forward from that roadmap and should be treated as unverified until the file is restored. **Restoring it is an R1 task under DN-8** - the compliance package needs an accurate record of what the key actually grants, and every rate claim in this section depends on it.
+> **⚠️ `docs/access.md` is missing.** The old roadmap cites it six times as the authoritative record of the production key's per-method limits, but it has never been committed to this repository (`git log --all -- docs/access.md` is empty). The figures below are carried forward from that roadmap and should be treated as unverified until the file is restored. **It no longer has an owning work item** - DN-8 carried it and DN-8 is dropped - but the gap is real and unchanged: every rate claim in this section depends on it, and §6.1 records that whether the key grants summoner-v4 is therefore still unverified. Restoring it is a standalone doc task, not a release gate.
 
 **What the production key allows** (per the figures above - see the caveat). Everything here is effectively unlimited at our scale: match-v5 and timeline (2000/10s), spectator-v5 (3000/10s), league-entries-by-puuid / champion-mastery / challenges / rotations (20000/10s). The only tight spots: **clash-v1 `/tournaments` at 10/min** (poll daily, cache) and **account-v1 at 1000/min** (only matters for mass metadata syncs). The key has **no TFT APIs** and only the tournament _stub_.
 
@@ -643,13 +694,13 @@ Merged from the old roadmap §9 and [`new-design.md`](new-design.md) §10.
 
 Five questions in descending order of how much damage a wrong answer does. Each is attached to the release that must answer it - these are **gates, not musings**.
 
-| #   | Question                                                                                                 | Gate                    | How to test                                                                                                                                                                                        |
-| --- | -------------------------------------------------------------------------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Do people share the Session Recap unprompted?**                                                        | End of R2               | Three pilot groups, zero marketing spend. If they don't share it, the flagship is wrong - and you need to know in month four, not month twelve                                                     |
-| 2   | **Is the Session Curve _true_ for real groups, and _interesting_ rather than obvious?**                  | **Before any R3 work**  | Compute it retroactively from existing `match_details` on your own group. **Costs a SQL query and zero Riot calls.** If the curve is flat, the single best differentiator is dead - find out first |
-| 3   | **Will the payer pay while friends free-ride?**                                                          | Before building billing | A manual Stripe link. Precedent says yes (game servers, TeamSpeak), but test it                                                                                                                    |
-| 4   | **Does the bridge neutralise the switching cost,** or do groups bounce back to Discord within two weeks? | End of R1 pilot         | If the bridge doesn't hold them, the whole anti-Guilded strategy needs rethinking                                                                                                                  |
-| 5   | **Can you get RSO?**                                                                                     | R1, ask week 1          | Changes onboarding friction materially. The icon handshake works but costs conversions                                                                                                             |
+| #   | Question                                                                                                 | Gate                    | How to test                                                                                                                                                                                                                       |
+| --- | -------------------------------------------------------------------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Do people share the Session Recap unprompted?**                                                        | R4 pilot                | Three pilot groups, zero marketing spend. If they don't share it, the flagship is wrong. **This gate moved with the pilot (§8A)** — it was timed to "end of R2", which is now before any group outside your own has seen the card |
+| 2   | **Is the Session Curve _true_ for real groups, and _interesting_ rather than obvious?**                  | **Before any R3 work**  | Compute it retroactively from existing `match_details` on your own group. **Costs a SQL query and zero Riot calls.** If the curve is flat, the single best differentiator is dead - find out first                                |
+| 3   | **Will the payer pay while friends free-ride?**                                                          | Before building billing | A manual Stripe link. Precedent says yes (game servers, TeamSpeak), but test it                                                                                                                                                   |
+| 4   | **Does the bridge neutralise the switching cost,** or do groups bounce back to Discord within two weeks? | R4 pilot                | If the bridge doesn't hold them, the whole anti-Guilded strategy needs rethinking. Moved with the pilot (§8A)                                                                                                                     |
+| 5   | **Can you get RSO?**                                                                                     | R1, ask week 1          | Changes onboarding friction materially. The icon handshake works but costs conversions                                                                                                                                            |
 
 Gate 2 is the cheapest and most load-bearing item in this entire document.
 
@@ -659,36 +710,36 @@ Gate 2 is the cheapest and most load-bearing item in this entire document.
 
 ### 13.1 Traceability - every `new-design.md` ID
 
-| ID        | Item                                 | Here                                                |
-| --------- | ------------------------------------ | --------------------------------------------------- |
-| MP-1      | Spaces multi-tenancy                 | ✅ **Shipped** - §6 R1                              |
-| MP-2      | Roles & moderation                   | ✅ **Shipped** - §6 R1                              |
-| MP-3      | SFU voice                            | ✅ **Shipped** - §7 R2                              |
-| MP-4      | Self-serve onboarding                | ✅ **Shipped** - §6 R1                              |
-| MP-5      | macOS build                          | §6 R1 (Meeps MP-12)                                 |
-| MP-6      | Native event rendering               | ✅ **Shipped** - MP-10 read path + MP-06 cards      |
-| MP-7      | Consent & data surface               | ✅ **Shipped** - §6 R1 (Meeps MP-13)                |
-| MP-8      | Bridge productisation                | ✅ **Shipped** - §6 R1                              |
-| MP-9      | Typed backend + coverage             | §8.6 R3                                             |
-| DN-1      | Typed event bus                      | ✅ **Shipped** - §5.1, §6 R1                        |
-| DN-2      | `squad_id` scope                     | ✅ **Shipped** - §5.2, §6 R1                        |
-| DN-3      | Riot account linking + opt-out       | ✅ **Shipped** — §5.3, §6 R1, §6.1                  |
-| DN-4      | Kill betting                         | §6 R1 - **doc deletion only, no code existed**      |
-| DN-5      | Presence ingestion                   | ✅ **Shipped** - §7 R2                              |
-| DN-6      | Session service                      | ✅ **Shipped** - §7 R2                              |
-| DN-7      | Rate limiter, cache, Postgres config | §8.6 R3                                             |
-| DN-8      | Riot compliance package              | §6 R1, **week 1**                                   |
-| DN-9      | Old roadmap Phase 0                  | ✅ **Shipped** - §3.1                               |
-| ~~DN-10~~ | ~~Migration tooling~~                | **Dropped** — versions table already exists; see §6 |
-| 6.3.1     | Session Recap                        | ✅ **Shipped** both sides - §7.1                    |
-| 6.3.2     | Session Curve                        | §8.1                                                |
-| 6.3.3     | LCU presence & champ select          | §8.2                                                |
-| 6.3.4     | Squad Draft                          | §8.3                                                |
-| 6.3.5     | Squad Wrapped                        | ✅ Diana's half shipped - §7.2                      |
-| 6.3.6     | Presence-aware notifications         | §7.3                                                |
-| 6.3.7     | Cross-game continuity                | §10, ideas                                          |
-| 6.4       | Calls                                | §8.5                                                |
-| §5.2      | Pipeline consolidation               | §5.4, §8.6                                          |
+| ID        | Item                                 | Here                                                      |
+| --------- | ------------------------------------ | --------------------------------------------------------- |
+| MP-1      | Spaces multi-tenancy                 | ✅ **Shipped** - §6 R1                                    |
+| MP-2      | Roles & moderation                   | ✅ **Shipped** - §6 R1                                    |
+| MP-3      | SFU voice                            | ✅ **Shipped** - §7 R2                                    |
+| MP-4      | Self-serve onboarding                | ✅ **Shipped** - §6 R1                                    |
+| MP-5      | macOS build                          | §6 R1 (Meeps MP-12)                                       |
+| MP-6      | Native event rendering               | ✅ **Shipped** - MP-10 read path + MP-06 cards            |
+| MP-7      | Consent & data surface               | ✅ **Shipped** - §6 R1 (Meeps MP-13)                      |
+| MP-8      | Bridge productisation                | ✅ **Shipped** - §6 R1                                    |
+| MP-9      | Typed backend + coverage             | §8.6 R3                                                   |
+| DN-1      | Typed event bus                      | ✅ **Shipped** - §5.1, §6 R1                              |
+| DN-2      | `squad_id` scope                     | ✅ **Shipped** - §5.2, §6 R1                              |
+| DN-3      | Riot account linking + opt-out       | ✅ **Shipped** — §5.3, §6 R1, §6.1                        |
+| DN-4      | Kill betting                         | §6 R1 - **doc deletion only, no code existed**            |
+| DN-5      | Presence ingestion                   | ✅ **Shipped** - §7 R2                                    |
+| DN-6      | Session service                      | ✅ **Shipped** - §7 R2                                    |
+| DN-7      | Rate limiter, cache, Postgres config | §8.6 R3                                                   |
+| ~~DN-8~~  | ~~Riot compliance package~~          | **Dropped** — not a deliverable; §4.1 still binds; see §6 |
+| DN-9      | Old roadmap Phase 0                  | ✅ **Shipped** - §3.1                                     |
+| ~~DN-10~~ | ~~Migration tooling~~                | **Dropped** — versions table already exists; see §6       |
+| 6.3.1     | Session Recap                        | ✅ **Shipped** both sides - §7.1                          |
+| 6.3.2     | Session Curve                        | §8.1                                                      |
+| 6.3.3     | LCU presence & champ select          | §8.2                                                      |
+| 6.3.4     | Squad Draft                          | §8.3                                                      |
+| 6.3.5     | Squad Wrapped                        | ✅ Diana's half shipped - §7.2                            |
+| 6.3.6     | Presence-aware notifications         | §7.3                                                      |
+| 6.3.7     | Cross-game continuity                | §10, ideas                                                |
+| 6.4       | Calls                                | §8.5                                                      |
+| §5.2      | Pipeline consolidation               | §5.4, §8.6                                                |
 
 ### 13.2 What changed from `diana-roadmap.md`
 
