@@ -78,6 +78,21 @@ const definitions: Record<BotKey, SlashCommand[]> = {
     pathfinder: [],
 };
 
+/**
+ * Bumped whenever the registered set changes.
+ *
+ * `commandManifest` memoises against this. Deriving the manifest means calling
+ * `toJSON()` on every command, and the Meeps suggest route runs on every
+ * keystroke - so recomputing it per call is real work on a hot path, while
+ * caching it without an invalidation signal would strand the cache the moment a
+ * test re-registers.
+ */
+let registryVersion = 0;
+
+export function getRegistryVersion(): number {
+    return registryVersion;
+}
+
 export function registerSlashCommands(
     commands: SlashCommand[],
     defaultBotKey: BotKey = 'diana'
@@ -97,6 +112,7 @@ export function registerSlashCommands(
             autocompleteHandlers[botKey].set(name, cmd.autocomplete);
         }
         definitions[botKey].push(cmd);
+        registryVersion += 1;
     }
     console.log(
         `[Diana] Registered commands for ${defaultBotKey}: [${[...handlers[defaultBotKey].keys()].join(', ')}]`
@@ -116,6 +132,7 @@ export function clearAllCommands(botKey?: BotKey): void {
         autocompleteHandlers[k].clear();
         definitions[k] = [];
     }
+    registryVersion += 1;
 }
 
 export async function syncCommandsToDiscord(botKey: BotKey): Promise<void> {

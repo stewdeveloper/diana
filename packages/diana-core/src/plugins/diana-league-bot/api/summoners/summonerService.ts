@@ -622,3 +622,86 @@ export const deleteRankHistory = async (rid: number) => {
         throw new Error('Failed to delete rank history.');
     }
 };
+
+export interface SquadSummonerSuggestion {
+    gameName: string;
+    tagLine: string | null;
+    matchRegionPrefix: string | null;
+    tier: string | null;
+    rank: string | null;
+    lp: number | null;
+}
+
+/**
+ * Whole summoners matching one query, for Meeps' command picker.
+ *
+ * WHY THIS EXISTS ALONGSIDE `searchSummonerGameNames` / `searchSummonerTags`
+ *
+ * Those two answer Discord's autocomplete protocol, which returns
+ * `{ name, value }` and therefore cannot fill more than the one option the
+ * player is focused on. That is a limit of the protocol, not of the data - so
+ * `/summoner` in Discord is necessarily two steps: choose a name, then choose a
+ * tag from the list that name narrowed.
+ *
+ * Meeps' picker is ours, so it does not have to inherit that. This returns the
+ * whole row, which lets one click fill `name` and `tag` together, and gives the
+ * suggestion a rank to show underneath. The Discord handlers are untouched and
+ * keep working exactly as they did.
+ *
+ * Squad-scoped by id rather than by guild: the caller already resolved the
+ * scope (see `resolveCommandScope`), and going back through `guildId` here
+ * would re-do that lookup to arrive at the same place.
+ */
+export async function searchSquadSummoners(
+    squadId: string,
+    search: string,
+    limit = 25
+): Promise<SquadSummonerSuggestion[]> {
+    try {
+        // "Louis#EUW" typed whole is the fastest path to the row somebody
+        // means, and it is what they will paste from anywhere else.
+        const raw = search.trim();
+        const hashIndex = raw.lastIndexOf('#');
+        const namePart = hashIndex > 0 ? raw.slice(0, hashIndex) : raw;
+        const tagPart = hashIndex > 0 ? raw.slice(hashIndex + 1) : null;
+
+        const conditions: string[] = [
+            'ss.squad_id = $1',
+            "s.game_id = 'league_of_legends'",
+        ];
+        const params: Array<string | number> = [squadId];
+
+        if (namePart) {
+            params.push(`${namePart}%`);
+            const nameParam = `$${params.length}`;
+            if (tagPart === null) {
+                // No '#' typed yet, so the query could be either half.
+                conditions.push(
+                    `(s."gameName" ILIKE ${nameParam} OR s."tagLine" ILIKE ${nameParam})`
+                );
+            } else {
+                conditions.push(`s."gameName" ILIKE ${nameParam}`);
+            }
+        }
+        if (tagPart) {
+            params.push(`${tagPart}%`);
+            conditions.push(`s."tagLine" ILIKE $${params.length}`);
+        }
+
+        params.push(limit);
+        const result = await db.query(
+            `SELECT DISTINCT s."gameName", s."tagLine", s."matchRegionPrefix",
+                    s."tier", s."rank", s."lp"
+             FROM summoners s
+             JOIN squad_summoners ss ON ss.puuid = s.puuid
+             WHERE ${conditions.join(' AND ')}
+             ORDER BY s."gameName" ASC, s."tagLine" ASC
+             LIMIT $${params.length}`,
+            params
+        );
+        return result.rows;
+    } catch (error) {
+        console.error('Error searching squad summoners:', error);
+        throw new Error('Failed to search squad summoners.');
+    }
+}

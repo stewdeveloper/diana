@@ -14,6 +14,7 @@ export * from './core/wrapped/wrappedTypes';
 export * from './core/wrapped/pairings';
 export * from './core/wrapped/wrappedService';
 export * from './core/squads/squadService';
+export * from './core/commands/commandScope';
 export * from './core/presence/presenceService';
 export * from './core/privacy/privacyService';
 export * from './core/identity/identityService';

@@ -1,6 +1,9 @@
 export * from './discord/client'; // BotKey, getDianaClient, getPathfinderClient
 export * from './discord/commandTypes';
 export * from './discord/commandRegistry';
+export * from './discord/commandManifest';
+export * from './discord/commandInvocation';
+export * from './discord/commandSuggest';
 export * from './discord/coreCommands';
 export * from './discord/setupDiscord';
 export * from './discord/messageAdapter';

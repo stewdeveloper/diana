@@ -42,6 +42,7 @@ import {
     createPathfinderPluginAdapter,
 } from './messageAdapter';
 import { createMeepsEventAdapter } from './meepsEventAdapter';
+import { commandApiRouter } from './commandApi';
 
 /** Cron scope label and schedule for the session recap sweep. */
 const SESSION_RECAP_LABEL = 'session-recap';
@@ -176,6 +177,12 @@ async function main() {
     // ingestion: Meeps asks it with its own user ids to find the matching Riot
     // accounts, and it is a server asking rather than a logged-in browser.
     app.use('/api/identity', identityApiRouter);
+    // Slash commands run from Meeps. Machine-to-machine like presence and
+    // identity, so the Meeps shared secret rather than the dashboard JWT - and
+    // unlike `/api/squads` there is no JWT fall-through, because the dashboard
+    // has no reason to run commands. The manifest is built per request, so
+    // mounting here (before `registerSlashCommands` below) is safe.
+    app.use('/api/commands', commandApiRouter);
 
     setExpressApp(app);
     setPluginMessageAdapter(leagueBotPlugin.id, createDianaPluginAdapter());
