@@ -135,7 +135,9 @@ export async function suggestForCommand(
             rows = await searchSquadSummoners(squadId, search, 25);
         } catch (err) {
             console.error(
-                `[Diana] Summoner suggestions for "${invocation.id}.${param}" failed:`,
+                '[Diana] Summoner suggestions for "%s.%s" failed:',
+                invocation.id,
+                param,
                 err
             );
             return [];

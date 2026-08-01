@@ -245,7 +245,11 @@ export async function invokeCommand(
         // conformance test is what keeps that true.
         await command.execute(shim as never);
     } catch (err) {
-        console.error(`[Diana] Command "${invocation.id}" threw:`, err);
+        // Constant format string with the id as an argument, not interpolated
+        // into it: the id arrives in a request body, and console treats its
+        // first argument as a format string - so a "%s" in an id would be
+        // consumed as a specifier rather than printed.
+        console.error('[Diana] Command "%s" threw:', invocation.id, err);
         if (!state.captured) return { ok: false, reason: 'threw' };
     }
 
@@ -286,7 +290,9 @@ export async function suggestFromCommand(
         // A failed suggestion is a slower path to the same answer - the person
         // can still type the value - so this never propagates.
         console.error(
-            `[Diana] Autocomplete for "${invocation.id}.${param}" threw:`,
+            '[Diana] Autocomplete for "%s.%s" threw:',
+            invocation.id,
+            param,
             err
         );
         return [];

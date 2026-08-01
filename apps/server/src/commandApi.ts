@@ -169,8 +169,15 @@ export async function runCommand(req: Request, res: Response): Promise<void> {
         });
 
         if (!outcome.ok) {
+            // `id` comes from a request body, and console treats its first
+            // argument as a format string - so it goes in as an argument
+            // rather than interpolated, or a "%s" in an id would be consumed
+            // as a specifier instead of printed.
             console.warn(
-                `[${timestamp()}] [Diana:commands] "${id}" produced no reply (${outcome.reason}).`
+                '[%s] [Diana:commands] "%s" produced no reply (%s).',
+                timestamp(),
+                id,
+                outcome.reason
             );
             res.json({
                 ok: false,
@@ -184,7 +191,9 @@ export async function runCommand(req: Request, res: Response): Promise<void> {
         res.json({ ok: true, payload: outcome.payload });
     } catch (err) {
         console.error(
-            `[${timestamp()}] [Diana:commands] POST /run "${id}" error:`,
+            '[%s] [Diana:commands] POST /run "%s" error:',
+            timestamp(),
+            id,
             err
         );
         res.status(500).json({ error: 'Failed to run command' });
@@ -229,7 +238,9 @@ export async function suggestCommand(
         res.json({ suggestions });
     } catch (err) {
         console.error(
-            `[${timestamp()}] [Diana:commands] POST /suggest "${id}" error:`,
+            '[%s] [Diana:commands] POST /suggest "%s" error:',
+            timestamp(),
+            id,
             err
         );
         res.json({ suggestions: [] });
