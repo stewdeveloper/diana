@@ -58,7 +58,10 @@ import { MatchV5DTOs } from 'twisted/dist/models-dto/matches/match-v5/match.dto'
 import { Constants } from 'twisted';
 import type { MessageAdapter } from '../../../core/pluginTypes';
 import type { EventAdapter } from '../../../core/eventTypes';
-import { buildMatchScopedEventId } from '../../../core/eventTypes';
+import {
+    buildMatchScopedEventId,
+    DIANA_EVENT_SCHEMA_VERSION,
+} from '../../../core/eventTypes';
 import { getSquadsTrackingPuuid } from '../../../core/squads/squadService';
 
 const lolService = createLolService();
@@ -682,6 +685,7 @@ const handleNewMatchCompleted = async (
 
             for (const squadId of await getSquadsTrackingPuuid(puuid)) {
                 await eventAdapter.emit({
+                    schemaVersion: DIANA_EVENT_SCHEMA_VERSION,
                     eventId: buildMatchScopedEventId(
                         'match.completed',
                         squadId,
@@ -722,6 +726,7 @@ const handleNewMatchCompleted = async (
 
                 if (checkForRankUp !== 'no_change') {
                     await eventAdapter.emit({
+                        schemaVersion: DIANA_EVENT_SCHEMA_VERSION,
                         eventId: buildMatchScopedEventId(
                             'rank.changed',
                             squadId,
@@ -750,6 +755,7 @@ const handleNewMatchCompleted = async (
                 const streakForEvent = streakByScope.all;
                 if (streakForEvent) {
                     await eventAdapter.emit({
+                        schemaVersion: DIANA_EVENT_SCHEMA_VERSION,
                         eventId: buildMatchScopedEventId(
                             'streak',
                             squadId,
@@ -770,6 +776,7 @@ const handleNewMatchCompleted = async (
 
                 if (milestoneToAnnounce) {
                     await eventAdapter.emit({
+                        schemaVersion: DIANA_EVENT_SCHEMA_VERSION,
                         eventId: buildMatchScopedEventId(
                             'milestone',
                             squadId,

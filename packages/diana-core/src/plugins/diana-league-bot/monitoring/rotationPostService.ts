@@ -7,7 +7,11 @@ import { buildChampionIdMap } from '../api/utils/dataDragonService';
 import { createLolService } from '../api/utils/lolService/lolServiceFactory';
 import type { MessageAdapter, MessagePayload } from '../../../core/pluginTypes';
 import type { EventAdapter } from '../../../core/eventTypes';
-import { buildPeriodicEventId, toIsoWeek } from '../../../core/eventTypes';
+import {
+    buildPeriodicEventId,
+    DIANA_EVENT_SCHEMA_VERSION,
+    toIsoWeek,
+} from '../../../core/eventTypes';
 import type { LeagueBotConfig } from '../types';
 
 const lolService = createLolService();
@@ -126,6 +130,7 @@ export function createRotationPostTick(
                 const squadId = await getSquadIdForGuild(guild.guild_id);
                 if (squadId) {
                     await eventAdapter?.emit({
+                        schemaVersion: DIANA_EVENT_SCHEMA_VERSION,
                         eventId: buildPeriodicEventId(
                             'rotation.weekly',
                             squadId,

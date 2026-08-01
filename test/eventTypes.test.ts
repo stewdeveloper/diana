@@ -2,8 +2,18 @@ import {
     buildMatchScopedEventId,
     buildPeriodicEventId,
     buildSessionEventId,
+    DIANA_EVENT_SCHEMA_VERSION,
+    DIANA_EVENT_TYPES,
     toIsoWeek,
 } from '../packages/diana-core/src/core/eventTypes';
+
+describe('Diana event wire contract', () => {
+    it('exports the versioned runtime discriminator list', () => {
+        expect(DIANA_EVENT_SCHEMA_VERSION).toBe(1);
+        expect(DIANA_EVENT_TYPES.length).toBeGreaterThan(0);
+        expect(new Set(DIANA_EVENT_TYPES).size).toBe(DIANA_EVENT_TYPES.length);
+    });
+});
 
 // ---------------------------------------------------------------------------
 // Idempotency keys

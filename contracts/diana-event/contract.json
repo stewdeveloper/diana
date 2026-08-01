@@ -1,0 +1,14 @@
+{
+    "schemaVersion": 1,
+    "eventTypes": [
+        "match.completed",
+        "rank.changed",
+        "streak",
+        "milestone",
+        "digest.weekly",
+        "rotation.weekly",
+        "session.completed"
+    ],
+    "source": "packages/diana-core/src/core/eventTypes.ts",
+    "sourceSha256": "c7c492d87c9b77344580807bd5b085c963f09dd8dd790581e6f350343f7f7e03"
+}
