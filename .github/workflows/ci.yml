@@ -38,7 +38,9 @@ jobs:
     timeout-minutes: 10
     continue-on-error: true
     permissions:
+      actions: read
       contents: read
+      pull-requests: write
       security-events: write
     steps:
       - name: Checkout repository (full history)
