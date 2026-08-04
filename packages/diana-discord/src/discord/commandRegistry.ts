@@ -6,13 +6,27 @@ import {
     type AutocompleteInteraction,
 } from 'discord.js';
 import type { SlashCommand } from './commandTypes';
-import type { BotKey } from './client';
+import { BOT_ENV, BOT_KEYS, type BotKey } from './botKeys';
 import { getGuildConfig } from 'diana-core';
 
 // Commands that may run even when no notification channel is configured
 const CHANNEL_EXEMPT_COMMANDS: Record<BotKey, Set<string>> = {
     diana: new Set(['help', 'setchannel', 'ping']),
     pathfinder: new Set(['apex-help', 'apex-channel']),
+    ash: new Set(['r6-help', 'r6-channel']),
+};
+
+/**
+ * The two commands a fresh guild has to run, per bot.
+ *
+ * Was a `botKey === 'pathfinder' ? … : …` pair inline in the gate below; a
+ * third bot would have been told to run Diana's `/setchannel`, which its
+ * client does not even publish.
+ */
+const SETUP_COMMANDS: Record<BotKey, { channel: string; add: string }> = {
+    diana: { channel: 'setchannel', add: 'add' },
+    pathfinder: { channel: 'apex-channel', add: 'apex-add' },
+    ash: { channel: 'r6-channel', add: 'r6-add' },
 };
 
 /**
@@ -31,6 +45,7 @@ const CHANNEL_EXEMPT_COMMANDS: Record<BotKey, Set<string>> = {
 const commandIds: Record<BotKey, Map<string, string>> = {
     diana: new Map(),
     pathfinder: new Map(),
+    ash: new Map(),
 };
 
 /**
@@ -63,19 +78,25 @@ export function setCommandIds(
 const cooldownMap = new Map<string, number>();
 const COOLDOWN_MS = 3000;
 
-const handlers = {
-    diana: new Map<string, SlashCommand['execute']>(),
-    pathfinder: new Map<string, SlashCommand['execute']>(),
+const handlers: Record<BotKey, Map<string, SlashCommand['execute']>> = {
+    diana: new Map(),
+    pathfinder: new Map(),
+    ash: new Map(),
 };
 
-const autocompleteHandlers = {
-    diana: new Map<string, NonNullable<SlashCommand['autocomplete']>>(),
-    pathfinder: new Map<string, NonNullable<SlashCommand['autocomplete']>>(),
+const autocompleteHandlers: Record<
+    BotKey,
+    Map<string, NonNullable<SlashCommand['autocomplete']>>
+> = {
+    diana: new Map(),
+    pathfinder: new Map(),
+    ash: new Map(),
 };
 
 const definitions: Record<BotKey, SlashCommand[]> = {
     diana: [],
     pathfinder: [],
+    ash: [],
 };
 
 /**
@@ -126,7 +147,7 @@ export function getRegisteredCommands(
 }
 
 export function clearAllCommands(botKey?: BotKey): void {
-    const keys: BotKey[] = botKey ? [botKey] : ['diana', 'pathfinder'];
+    const keys: BotKey[] = botKey ? [botKey] : [...BOT_KEYS];
     for (const k of keys) {
         handlers[k].clear();
         autocompleteHandlers[k].clear();
@@ -136,16 +157,11 @@ export function clearAllCommands(botKey?: BotKey): void {
 }
 
 export async function syncCommandsToDiscord(botKey: BotKey): Promise<void> {
-    const tokenEnv =
-        botKey === 'pathfinder'
-            ? 'APEX_DISCORD_BOT_TOKEN'
-            : 'DISCORD_BOT_TOKEN';
-    const clientIdEnv =
-        botKey === 'pathfinder'
-            ? 'APEX_DISCORD_CLIENT_ID'
-            : 'DISCORD_CLIENT_ID';
-    const guildIdEnv =
-        botKey === 'pathfinder' ? 'APEX_DISCORD_GUILD_ID' : 'DISCORD_GUILD_ID';
+    const {
+        token: tokenEnv,
+        clientId: clientIdEnv,
+        guildId: guildIdEnv,
+    } = BOT_ENV[botKey];
 
     const token = process.env[tokenEnv];
     const clientId = process.env[clientIdEnv];
@@ -216,14 +232,9 @@ export async function handleSlashCommand(
             // The old message said "run /setchannel first" and stopped, which
             // left the player at a second dead end the moment they did - the
             // gap issue #149 called "gating dead-ends without an explanation".
-            const channelCmd = commandMention(
-                botKey === 'pathfinder' ? 'apex-channel' : 'setchannel',
-                botKey
-            );
-            const addCmd = commandMention(
-                botKey === 'pathfinder' ? 'apex-add' : 'add',
-                botKey
-            );
+            const setup = SETUP_COMMANDS[botKey];
+            const channelCmd = commandMention(setup.channel, botKey);
+            const addCmd = commandMention(setup.add, botKey);
             await interaction.reply({
                 content:
                     `Almost there — this server needs two commands before anything else works.\n` +

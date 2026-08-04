@@ -1,7 +1,13 @@
 import 'dotenv/config';
 import { MessageFlags } from 'discord.js';
 import type { Guild, Interaction, TextChannel, Client } from 'discord.js';
-import { getDianaClient, getPathfinderClient, loginBot } from './client';
+import { BOT_ENV, BOT_KEYS } from './botKeys';
+import {
+    getAshClient,
+    getDianaClient,
+    getPathfinderClient,
+    loginBot,
+} from './client';
 import type { BotKey } from './client';
 import {
     syncCommandsToDiscord,
@@ -23,6 +29,15 @@ import {
  * part of setup is how a two-command setup starts feeling like a chore.
  */
 function buildWelcomeMessage(botKey: BotKey): string {
+    if (botKey === 'ash') {
+        return (
+            "Hi! I'm **Ash**, a Rainbow Six Siege tracking bot.\n\n" +
+            `**1.** ${commandMention('r6-channel', 'ash')} — pick where results get posted.\n` +
+            `**2.** ${commandMention('r6-add', 'ash')} — track your first player.\n\n` +
+            `That is it. ${commandMention('r6-help', 'ash')} if you get stuck.`
+        );
+    }
+
     if (botKey === 'pathfinder') {
         return (
             "Hi! I'm **Pathfinder**, an Apex Legends tracking bot.\n\n" +
@@ -154,7 +169,11 @@ async function startBot(botKey: BotKey, tokenEnvVar: string): Promise<void> {
 export async function setupAndStartDiscord(): Promise<void> {
     attachClientListeners(getDianaClient(), 'diana');
     attachClientListeners(getPathfinderClient(), 'pathfinder');
+    attachClientListeners(getAshClient(), 'ash');
 
-    await startBot('diana', 'DISCORD_BOT_TOKEN');
-    await startBot('pathfinder', 'APEX_DISCORD_BOT_TOKEN');
+    // `startBot` warns and returns when a token is unset, so a deployment
+    // that has not been given Ash's credentials keeps running the other two.
+    for (const botKey of BOT_KEYS) {
+        await startBot(botKey, BOT_ENV[botKey].token);
+    }
 }

@@ -1,5 +1,6 @@
 import type { MessageAdapter, MessagePayload, MessageTarget } from 'diana-core';
 import {
+    createAshDiscordAdapter,
     createDianaDiscordAdapter,
     createPathfinderDiscordAdapter,
 } from './discordAdapter';
@@ -26,4 +27,9 @@ export function createPathfinderPluginAdapter(): MessageAdapter {
         createPathfinderDiscordAdapter(),
         createMeepsMessageAdapter()
     );
+}
+
+/** Message adapter for the Rainbow Six Siege plugin (Ash bot). */
+export function createAshPluginAdapter(): MessageAdapter {
+    return fanOut(createAshDiscordAdapter(), createMeepsMessageAdapter());
 }

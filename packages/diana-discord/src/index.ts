@@ -10,3 +10,4 @@ export * from './discord/messageAdapter';
 export * from './discord/directMessage';
 export * from './plugins/diana-league-bot/discord/commands';
 export * from './plugins/diana-apex-bot/discord/commands';
+export * from './plugins/diana-r6-bot/discord/commands';

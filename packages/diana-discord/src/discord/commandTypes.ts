@@ -5,7 +5,7 @@ import type {
     ChatInputCommandInteraction,
     AutocompleteInteraction,
 } from 'discord.js';
-import type { BotKey } from './client';
+import type { BotKey } from './botKeys';
 
 export interface SlashCommand {
     data:
