@@ -22,9 +22,16 @@
  * WHAT IT COSTS
  *
  * One summoner-v4 call per open handshake per tick. Open handshakes are keyed on
- * the Discord user, so the ceiling is "people mid-link right now", which for a
- * bot serving friend groups is a handful. Roadmap §9 costed `/link` at ~2 calls;
- * it is now ~2 plus the sweep, which is why §9 says so.
+ * the subject, so the ceiling is "people mid-link right now", which for a bot
+ * serving friend groups is a handful. Roadmap §9 costed `/link` at ~2 calls; it
+ * is now ~2 plus the sweep, which is why §9 says so.
+ *
+ * WHY IT MATTERS MORE THAN IT USED TO
+ *
+ * Since 022 a handshake can be started from Meeps' Settings screen, and that
+ * subject has no `/link confirm` and no DM. For a Meeps-started link the sweep
+ * is not the convenience it is for Discord - it is the only thing that ever
+ * completes it. A Meeps client watches the challenge disappear.
  */
 
 import {
@@ -48,6 +55,11 @@ export interface LinkSweepLolService {
  * Implementations MUST NOT throw: a player with closed DMs must not stop the
  * sweep for everybody else, and the link is already made by the time this is
  * called - the message is the courtesy, not the outcome.
+ *
+ * Only ever called for a `discord_user` subject, because a DM is the only thing
+ * this notifier can send. A Meeps-started link completes just as silently and
+ * the Meeps client finds out by polling; routing it through here would mean
+ * inventing a Discord user for somebody who may not have one.
  */
 export type LinkVerifiedNotifier = (verified: {
     discordUserId: string;
@@ -111,7 +123,10 @@ export const runLinkSweep = async (
             result.checked += 1;
 
             const outcome = await verifyLinkChallenge(
-                challenge.discord_user_id,
+                {
+                    kind: challenge.subject_kind,
+                    id: challenge.subject_id,
+                },
                 profile.profileIconId,
                 now
             );
@@ -125,9 +140,13 @@ export const runLinkSweep = async (
             }
 
             result.verified += 1;
+            // Nothing to send a Meeps subject: `notify` is a DM, and a Meeps
+            // user need not have a Discord account at all. Their client is
+            // polling and sees the challenge gone.
+            if (challenge.subject_kind !== 'discord_user') continue;
             try {
                 await options.notify?.({
-                    discordUserId: challenge.discord_user_id,
+                    discordUserId: challenge.subject_id,
                     puuid: challenge.puuid,
                     gameName: challenge.game_name,
                     tagLine: challenge.tag_line,
@@ -136,7 +155,7 @@ export const runLinkSweep = async (
                 // The link is already made. A failed DM costs the player a
                 // notification, not their link.
                 console.error(
-                    `[${timestamp()}] [link-sweep] Could not notify ${challenge.discord_user_id}:`,
+                    `[${timestamp()}] [link-sweep] Could not notify ${challenge.subject_id}:`,
                     error
                 );
             }

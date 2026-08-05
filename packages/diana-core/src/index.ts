@@ -48,6 +48,7 @@ export * from './plugins/diana-league-bot/presentation/leaguePresentation';
 export * from './plugins/diana-league-bot/api/utils/db';
 export * from './plugins/diana-league-bot/api/utils/dataDragonService';
 export * from './plugins/diana-league-bot/api/utils/rankService';
+export * from './plugins/diana-league-bot/api/utils/regions';
 export * from './plugins/diana-league-bot/api/utils/lolService/lolServiceFactory';
 export * from './plugins/diana-league-bot/api/summoners/summonerService';
 export * from './plugins/diana-league-bot/api/summoners/guildService';

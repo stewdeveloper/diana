@@ -22,10 +22,33 @@
 import { db } from '../../plugins/diana-league-bot/api/utils/db';
 
 /** What kind of external account a link points at. */
-export type IdentityAccountKind = 'riot_puuid' | 'discord_user' | 'meeps_user';
+export type IdentityAccountKind =
+    | 'riot_puuid'
+    | 'discord_user'
+    | 'meeps_user'
+    | 'r6_ubisoft';
+
+/**
+ * The kinds that identify a *person* rather than a game account.
+ *
+ * The distinction the challenge subject needs: a handshake attaches a Riot
+ * account to somebody, and "somebody" can be a Discord user or a Meeps user but
+ * never a puuid or a Ubisoft id.
+ */
+export type IdentitySubjectKind = 'discord_user' | 'meeps_user';
+
+/** Who a link challenge is for. */
+export interface ChallengeSubject {
+    kind: IdentitySubjectKind;
+    id: string;
+}
 
 /** How a link was established. Null until it is verified at all. */
-export type VerificationMethod = 'icon_handshake' | 'trusted' | 'rso';
+export type VerificationMethod =
+    | 'icon_handshake'
+    | 'trusted'
+    | 'rso'
+    | 'self_asserted';
 
 /**
  * The methods that actually prove ownership.
@@ -35,6 +58,12 @@ export type VerificationMethod = 'icon_handshake' | 'trusted' | 'rso';
  * a method rather than from this set is the easy mistake, and it would silently
  * mark every trusted link as verified - collapsing the one distinction that
  * lets a privilege check be stricter than a lookup.
+ *
+ * `self_asserted` is absent for a stronger reason: for Siege there is no method
+ * that could be present. Ubisoft publishes no OAuth and Siege has no profile
+ * field a challenge could ask a player to change, so an r6_ubisoft link records
+ * that somebody typed a name which resolved to a real profile, and nothing more.
+ * A privilege check that trusted it would be trusting the claimant.
  */
 const VERIFYING_METHODS: readonly VerificationMethod[] = [
     'icon_handshake',
@@ -51,7 +80,8 @@ export interface IdentityAccount {
 }
 
 export interface LinkChallenge {
-    discord_user_id: string;
+    subject_kind: IdentitySubjectKind;
+    subject_id: string;
     puuid: string;
     game_name: string;
     tag_line: string;
@@ -73,9 +103,9 @@ export interface LinkChallenge {
  *
  * The original comment justified the short window as stopping an abandoned
  * challenge "holding a claim on somebody else's account". That was wrong too: a
- * challenge holds nothing. `identity_link_challenges` is keyed on
- * `discord_user_id`, so two people can have an open challenge for the same
- * puuid, and no link exists until one of them verifies.
+ * challenge holds nothing. `identity_link_challenges` is keyed on the subject,
+ * so two people can have an open challenge for the same puuid, and no link
+ * exists until one of them verifies.
  *
  * The real cost of a long window is coincidence: the longer it stays open, the
  * more chance the account's owner independently sets the exact icon being asked
@@ -250,6 +280,12 @@ export interface ResolvedIdentity {
     puuids: string[];
     discordUserIds: string[];
     meepsUserIds: string[];
+    /**
+     * Ubisoft profile ids. There is no `verifiedR6UbisoftIds` beside this and
+     * there never will be - see `createSelfAssertedLink` - so a caller that
+     * needs proof has to treat this list as unproven in full.
+     */
+    r6UbisoftIds: string[];
     /** The subset of `puuids` whose link was actually verified. */
     verifiedPuuids: string[];
 }
@@ -259,6 +295,7 @@ const EMPTY_RESOLUTION: ResolvedIdentity = {
     puuids: [],
     discordUserIds: [],
     meepsUserIds: [],
+    r6UbisoftIds: [],
     verifiedPuuids: [],
 };
 
@@ -288,6 +325,7 @@ export const resolveIdentity = async (
         puuids: of('riot_puuid'),
         discordUserIds: of('discord_user'),
         meepsUserIds: of('meeps_user'),
+        r6UbisoftIds: of('r6_ubisoft'),
         verifiedPuuids: accounts
             .filter((a) => a.kind === 'riot_puuid' && a.verified_at !== null)
             .map((a) => a.external_id),
@@ -331,13 +369,20 @@ export const chooseChallengeIcon = (
 };
 
 /**
- * Open a handshake, replacing any challenge this person already had.
+ * Open a handshake, replacing any challenge this subject already had.
  *
- * One outstanding challenge per Discord user, so starting a second `/link`
- * abandons the first rather than leaving two live claims.
+ * One outstanding challenge per subject, so starting a second link abandons the
+ * first rather than leaving two live claims.
+ *
+ * Per *subject*, not per person: somebody who exists as both a Discord user and
+ * a Meeps user can have one of each, because those are two separate attempts
+ * started from two separate places. Neither holds anything the other could
+ * lose — see the note on `CHALLENGE_TTL_MS` — so the only cost of allowing both
+ * is one extra summoner-v4 read per sweep tick, and the alternative is Meeps
+ * silently cancelling a `/link start` somebody is in the middle of.
  */
 export const createLinkChallenge = async (
-    discordUserId: string,
+    subject: ChallengeSubject,
     account: {
         puuid: string;
         gameName: string;
@@ -351,10 +396,10 @@ export const createLinkChallenge = async (
 
     const result = await db.query(
         `INSERT INTO identity_link_challenges
-             (discord_user_id, puuid, game_name, tag_line, region,
+             (subject_kind, subject_id, puuid, game_name, tag_line, region,
               required_icon, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (discord_user_id) DO UPDATE
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (subject_kind, subject_id) DO UPDATE
              SET puuid = EXCLUDED.puuid,
                  game_name = EXCLUDED.game_name,
                  tag_line = EXCLUDED.tag_line,
@@ -362,10 +407,11 @@ export const createLinkChallenge = async (
                  required_icon = EXCLUDED.required_icon,
                  expires_at = EXCLUDED.expires_at,
                  created_at = NOW()
-         RETURNING discord_user_id, puuid, game_name, tag_line, region,
+         RETURNING subject_kind, subject_id, puuid, game_name, tag_line, region,
                    required_icon, expires_at, created_at`,
         [
-            discordUserId,
+            subject.kind,
+            subject.id,
             account.puuid,
             account.gameName,
             account.tagLine,
@@ -389,7 +435,7 @@ export const getPendingLinkChallenges = async (
     now: number = Date.now()
 ): Promise<LinkChallenge[]> => {
     const result = await db.query(
-        `SELECT discord_user_id, puuid, game_name, tag_line, region,
+        `SELECT subject_kind, subject_id, puuid, game_name, tag_line, region,
                 required_icon, expires_at, created_at
            FROM identity_link_challenges
           WHERE expires_at > $1
@@ -411,40 +457,46 @@ export const deleteExpiredLinkChallenges = async (
 };
 
 /**
- * The open challenge for this person, or null.
+ * The open challenge for this subject, or null.
  *
  * Expiry is applied here rather than left to the caller, and an expired row is
  * deleted on the way past: a challenge nobody finished is not state worth
  * keeping, and sweeping it on read means no cron has to.
+ *
+ * This is also Meeps' poll. A Meeps client has no `/link confirm` to run and no
+ * DM to receive, so "is my handshake still open" is the only question it can
+ * ask, and the answer going from a row to null is how it learns the sweep
+ * finished the job.
  */
 export const getLinkChallenge = async (
-    discordUserId: string,
+    subject: ChallengeSubject,
     now: number = Date.now()
 ): Promise<LinkChallenge | null> => {
     const result = await db.query(
-        `SELECT discord_user_id, puuid, game_name, tag_line, region,
+        `SELECT subject_kind, subject_id, puuid, game_name, tag_line, region,
                 required_icon, expires_at, created_at
            FROM identity_link_challenges
-          WHERE discord_user_id = $1`,
-        [discordUserId]
+          WHERE subject_kind = $1 AND subject_id = $2`,
+        [subject.kind, subject.id]
     );
 
     const challenge: LinkChallenge | undefined = result.rows[0];
     if (!challenge) return null;
 
     if (new Date(challenge.expires_at).getTime() <= now) {
-        await deleteLinkChallenge(discordUserId);
+        await deleteLinkChallenge(subject);
         return null;
     }
     return challenge;
 };
 
 export const deleteLinkChallenge = async (
-    discordUserId: string
+    subject: ChallengeSubject
 ): Promise<void> => {
     await db.query(
-        `DELETE FROM identity_link_challenges WHERE discord_user_id = $1`,
-        [discordUserId]
+        `DELETE FROM identity_link_challenges
+          WHERE subject_kind = $1 AND subject_id = $2`,
+        [subject.kind, subject.id]
     );
 };
 
@@ -461,16 +513,22 @@ export type VerifyOutcome =
  * without a Riot key and the Riot call stays at the command layer where its
  * failure can be reported in the player's own words.
  *
- * On success both accounts are linked to one identity - the Discord user and
- * the Riot account - because the point of the handshake is to establish that
- * they are the same person, and linking only one half would record none of it.
+ * On success both accounts are linked to one identity - the subject and the
+ * Riot account - because the point of the handshake is to establish that they
+ * are the same person, and linking only one half would record none of it.
+ *
+ * `getOrCreateIdentityForAccount` on the subject is what makes a Meeps-started
+ * link land on the *existing* person rather than a new one: a Meeps user who has
+ * already been attached to their Discord identity resolves to that identity, so
+ * the puuid joins everything else they own. Somebody with no Discord account
+ * gets a fresh identity, which is correct - there is nothing to join them to.
  */
 export const verifyLinkChallenge = async (
-    discordUserId: string,
+    subject: ChallengeSubject,
     observedIconId: number,
     now: number = Date.now()
 ): Promise<VerifyOutcome> => {
-    const challenge = await getLinkChallenge(discordUserId, now);
+    const challenge = await getLinkChallenge(subject, now);
     if (!challenge) return { ok: false, reason: 'no_challenge' };
 
     if (challenge.required_icon !== observedIconId) {
@@ -486,8 +544,8 @@ export const verifyLinkChallenge = async (
     }
 
     const identityId = await getOrCreateIdentityForAccount(
-        'discord_user',
-        discordUserId
+        subject.kind,
+        subject.id
     );
 
     const linked = await linkAccount(
@@ -508,7 +566,7 @@ export const verifyLinkChallenge = async (
         };
     }
 
-    await deleteLinkChallenge(discordUserId);
+    await deleteLinkChallenge(subject);
     return { ok: true, puuid: challenge.puuid, identityId };
 };
 
@@ -528,4 +586,36 @@ export const createTrustedLink = async (
         discordUserId
     );
     return linkAccount(identityId, 'riot_puuid', puuid, { method: 'trusted' });
+};
+
+/**
+ * Link a Siege account to whoever this subject is.
+ *
+ * **There is no verified version of this and there cannot be one.** Ubisoft
+ * publishes no OAuth, and Siege has no profile field a challenge could ask a
+ * player to change, so nothing on either side of this call can distinguish the
+ * account's owner from somebody who typed their name. `self_asserted` is the
+ * honest record of that and is not a verifying method, so `verified_at` stays
+ * null and any check stricter than a lookup will keep refusing it.
+ *
+ * What it *is* good for is the thing 020 could not do: routing. An R6 rank
+ * change arrives keyed on a `ubisoftId`, and this is the only row that says
+ * which person that is - which is enough to put the notification in front of
+ * them, a decision that grants nothing and costs nothing if the claim is wrong.
+ *
+ * The primary key still means one Siege account belongs to one person, so
+ * claiming somebody else's is refused rather than allowed to move it.
+ */
+export const createSelfAssertedLink = async (
+    subject: ChallengeSubject,
+    kind: Extract<IdentityAccountKind, 'r6_ubisoft'>,
+    externalId: string
+): Promise<LinkOutcome> => {
+    const identityId = await getOrCreateIdentityForAccount(
+        subject.kind,
+        subject.id
+    );
+    return linkAccount(identityId, kind, externalId, {
+        method: 'self_asserted',
+    });
 };

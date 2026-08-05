@@ -20,7 +20,8 @@ import { runLinkSweep } from '../packages/diana-core/src/core/identity/linkSweep
  */
 
 const challenge = (overrides: Record<string, unknown> = {}) => ({
-    discord_user_id: 'discord-1',
+    subject_kind: 'discord_user',
+    subject_id: 'discord-1',
     puuid: 'puuid-1',
     game_name: 'Louis',
     tag_line: 'EUW',
@@ -64,7 +65,7 @@ describe('runLinkSweep', () => {
             'EU_WEST'
         );
         expect(verifyLinkChallengeMock).toHaveBeenCalledWith(
-            'discord-1',
+            { kind: 'discord_user', id: 'discord-1' },
             12,
             expect.any(Number)
         );
@@ -129,7 +130,7 @@ describe('runLinkSweep', () => {
                 .mockResolvedValue({ profileIconId: 12 }),
         };
         getPendingLinkChallengesMock.mockResolvedValue([
-            challenge({ discord_user_id: 'broken', puuid: 'puuid-broken' }),
+            challenge({ subject_id: 'broken', puuid: 'puuid-broken' }),
             challenge(),
         ]);
 
@@ -137,6 +138,27 @@ describe('runLinkSweep', () => {
 
         expect(result.verified).toBe(1);
         expect(result.pending).toBe(1);
+    });
+
+    it('sends no DM for a Meeps-started link, because there is nobody to DM', async () => {
+        // 022. A Meeps user need not have a Discord account at all, and the
+        // notifier's only channel is a DM. Their client polls instead — the
+        // sweep is the *only* thing that ever completes a Meeps link, so
+        // silently succeeding here is the whole flow working, not a gap.
+        getPendingLinkChallengesMock.mockResolvedValue([
+            challenge({ subject_kind: 'meeps_user', subject_id: 'meeps-1' }),
+        ]);
+        const notify = jest.fn().mockResolvedValue(undefined);
+
+        const result = await runLinkSweep(lolService(12), { notify });
+
+        expect(verifyLinkChallengeMock).toHaveBeenCalledWith(
+            { kind: 'meeps_user', id: 'meeps-1' },
+            12,
+            expect.any(Number)
+        );
+        expect(result.verified).toBe(1);
+        expect(notify).not.toHaveBeenCalled();
     });
 
     it('does not let a failed DM cost somebody their link', async () => {

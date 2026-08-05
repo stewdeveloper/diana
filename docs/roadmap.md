@@ -197,6 +197,21 @@ One `identities` table: one person → many linked accounts (Riot PUUID per game
 > Meeps' MP-05, which is also where the Meeps end of `POST
 /api/identity/meeps-user` gets called.
 
+> **Extended by migration 022** — Meeps' Settings → Connections screen needed to
+> start a link itself, for somebody who may have no Discord account at all.
+> `identity_link_challenges` is now keyed on `(subject_kind, subject_id)` rather
+> than a Discord snowflake, and `POST/GET/DELETE /api/identity/riot/challenge`
+> drive the same icon handshake from Meeps. The sweep is what completes those:
+> there is no Meeps equivalent of `/link confirm`, by design.
+>
+> 022 also adds an `r6_ubisoft` account kind, so an R6 rank notification can be
+> routed to the person it is about — the gap 020 left. **It can never be
+> verified.** Ubisoft publishes no OAuth and Siege has no profile field a
+> handshake could ask a player to change, so those links record
+> `method = 'self_asserted'` with `verified_at` null, and `self_asserted` is
+> deliberately absent from `VERIFYING_METHODS`. Anything that grants a privilege
+> must keep refusing them.
+
 ### 5.4 One Riot pipeline (§5.2 of the strategy doc)
 
 Meeps maintains `lol_match_pool`, `lol_precomputed_builds`, `draftgap_dataset`; Diana maintains `match_details`, `match_scores`, `rank_tracking`. Two pipelines, two sets of Riot calls, one-product-per-key exposure, two places to fix a patch-day breakage.

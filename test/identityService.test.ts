@@ -41,8 +41,12 @@ const account = (over: Record<string, unknown> = {}) => ({
 
 const NOW = Date.parse('2026-07-31T12:00:00.000Z');
 
+const DISCORD_SUBJECT = { kind: 'discord_user' as const, id: 'discord-1' };
+const MEEPS_SUBJECT = { kind: 'meeps_user' as const, id: 'meeps-1' };
+
 const challenge = (over: Record<string, unknown> = {}) => ({
-    discord_user_id: 'discord-1',
+    subject_kind: 'discord_user',
+    subject_id: 'discord-1',
     puuid: 'puuid-1',
     game_name: 'Louis',
     tag_line: 'EUW',
@@ -325,6 +329,7 @@ describe('resolveIdentity', () => {
             puuids: [],
             discordUserIds: [],
             meepsUserIds: [],
+            r6UbisoftIds: [],
             verifiedPuuids: [],
         });
         expect(queryMock).toHaveBeenCalledTimes(1);
@@ -351,14 +356,15 @@ describe('link challenges', () => {
     it('expires ten minutes out', async () => {
         queryMock.mockResolvedValueOnce({ rows: [challenge()] });
         await createLinkChallenge(
-            'discord-1',
+            DISCORD_SUBJECT,
             { puuid: 'puuid-1', gameName: 'Louis', tagLine: 'EUW' },
             590,
             NOW
         );
 
+        // Index 7, not 6: the subject is two parameters since 022.
         const params = queryMock.mock.calls[0][1];
-        expect(Date.parse(params[6]) - NOW).toBe(CHALLENGE_TTL_MS);
+        expect(Date.parse(params[7]) - NOW).toBe(CHALLENGE_TTL_MS);
     });
 
     it('replaces an earlier challenge rather than adding one', async () => {
@@ -366,21 +372,21 @@ describe('link challenges', () => {
         // abandons the first instead of leaving two live claims.
         queryMock.mockResolvedValueOnce({ rows: [challenge()] });
         await createLinkChallenge(
-            'discord-1',
+            DISCORD_SUBJECT,
             { puuid: 'puuid-1', gameName: 'Louis', tagLine: 'EUW' },
             590,
             NOW
         );
         expect(String(queryMock.mock.calls[0][0])).toContain(
-            'ON CONFLICT (discord_user_id) DO UPDATE'
+            'ON CONFLICT (subject_kind, subject_id) DO UPDATE'
         );
     });
 
     it('returns an open challenge', async () => {
         queryMock.mockResolvedValueOnce({ rows: [challenge()] });
-        await expect(getLinkChallenge('discord-1', NOW)).resolves.toMatchObject(
-            { puuid: 'puuid-1' }
-        );
+        await expect(
+            getLinkChallenge(DISCORD_SUBJECT, NOW)
+        ).resolves.toMatchObject({ puuid: 'puuid-1' });
     });
 
     it('treats an expired challenge as absent and sweeps it', async () => {
@@ -394,7 +400,9 @@ describe('link challenges', () => {
             })
             .mockResolvedValueOnce({ rows: [] });
 
-        await expect(getLinkChallenge('discord-1', NOW)).resolves.toBeNull();
+        await expect(
+            getLinkChallenge(DISCORD_SUBJECT, NOW)
+        ).resolves.toBeNull();
         expect(String(queryMock.mock.calls[1][0])).toContain('DELETE FROM');
     });
 
@@ -404,17 +412,21 @@ describe('link challenges', () => {
                 rows: [challenge({ expires_at: new Date(NOW).toISOString() })],
             })
             .mockResolvedValueOnce({ rows: [] });
-        await expect(getLinkChallenge('discord-1', NOW)).resolves.toBeNull();
+        await expect(
+            getLinkChallenge(DISCORD_SUBJECT, NOW)
+        ).resolves.toBeNull();
     });
 
     it('returns null when there was never a challenge', async () => {
         queryMock.mockResolvedValueOnce({ rows: [] });
-        await expect(getLinkChallenge('discord-1', NOW)).resolves.toBeNull();
+        await expect(
+            getLinkChallenge(DISCORD_SUBJECT, NOW)
+        ).resolves.toBeNull();
     });
 
     it('deletes on request', async () => {
         queryMock.mockResolvedValueOnce({ rows: [] });
-        await deleteLinkChallenge('discord-1');
+        await deleteLinkChallenge(DISCORD_SUBJECT);
         expect(String(queryMock.mock.calls[0][0])).toContain('DELETE FROM');
     });
 });
@@ -432,12 +444,42 @@ describe('verifyLinkChallenge', () => {
             .mockResolvedValueOnce({ rows: [account()] }) // linkAccount: upsert
             .mockResolvedValueOnce({ rows: [] }); // deleteLinkChallenge
 
-        const outcome = await verifyLinkChallenge('discord-1', 590, NOW);
+        const outcome = await verifyLinkChallenge(DISCORD_SUBJECT, 590, NOW);
         expect(outcome).toEqual({
             ok: true,
             puuid: 'puuid-1',
             identityId: 'id-1',
         });
+    });
+
+    it('attaches the Riot account to a meeps_user subject (022)', async () => {
+        // The case the pre-022 schema could not express: the identity a
+        // verified link lands on is the *subject's*, so a Meeps-started
+        // handshake joins the puuid to the Meeps user rather than to a Discord
+        // account they may not have.
+        queryMock
+            .mockResolvedValueOnce({
+                rows: [
+                    challenge({
+                        subject_kind: 'meeps_user',
+                        subject_id: 'meeps-1',
+                        required_icon: 590,
+                    }),
+                ],
+            })
+            .mockResolvedValueOnce({ rows: [account({ kind: 'meeps_user' })] })
+            .mockResolvedValueOnce({ rows: [] }) // linkAccount: getAccount
+            .mockResolvedValueOnce({ rows: [account()] }) // linkAccount: upsert
+            .mockResolvedValueOnce({ rows: [] }); // deleteLinkChallenge
+
+        const outcome = await verifyLinkChallenge(MEEPS_SUBJECT, 590, NOW);
+        expect(outcome).toEqual({
+            ok: true,
+            puuid: 'puuid-1',
+            identityId: 'id-1',
+        });
+        // The identity was looked up by the *subject*, not by a Discord id.
+        expect(queryMock.mock.calls[1][1]).toEqual(['meeps_user', 'meeps-1']);
     });
 
     it('reports a mismatch with both icons, and leaves the challenge open', async () => {
@@ -447,7 +489,7 @@ describe('verifyLinkChallenge', () => {
             rows: [challenge({ required_icon: 590 })],
         });
 
-        const outcome = await verifyLinkChallenge('discord-1', 12, NOW);
+        const outcome = await verifyLinkChallenge(DISCORD_SUBJECT, 12, NOW);
         expect(outcome).toEqual({
             ok: false,
             reason: 'icon_mismatch',
@@ -469,7 +511,7 @@ describe('verifyLinkChallenge', () => {
             .mockResolvedValueOnce({ rows: [] });
 
         await expect(
-            verifyLinkChallenge('discord-1', 590, NOW)
+            verifyLinkChallenge(DISCORD_SUBJECT, 590, NOW)
         ).resolves.toEqual({ ok: false, reason: 'no_challenge' });
     });
 
@@ -486,7 +528,7 @@ describe('verifyLinkChallenge', () => {
             });
 
         await expect(
-            verifyLinkChallenge('discord-1', 590, NOW)
+            verifyLinkChallenge(DISCORD_SUBJECT, 590, NOW)
         ).resolves.toEqual({
             ok: false,
             reason: 'already_linked',
