@@ -114,13 +114,21 @@ async function postSessionIfChanged(
         profile.stats.wins,
         profile.stats.losses
     );
+    // Logged rather than swallowed: history is a nice-to-have and must not
+    // abort the tick, but a silent `.catch(() => {})` is how the write to
+    // `rank_tracking` went unnoticed for as long as it did.
     await createR6RankHistory(
         `R6_SYNC_${ubisoftId}_${Date.now()}`,
         ubisoftId,
         newTier,
         newDiv,
         newRp
-    ).catch(() => {});
+    ).catch((err) =>
+        console.error(
+            `[R6] Failed to record rank history for ${ubisoftId}:`,
+            err
+        )
+    );
 
     const guilds = await getGuildsTrackingR6Player(ubisoftId);
     for (const guild of guilds) {

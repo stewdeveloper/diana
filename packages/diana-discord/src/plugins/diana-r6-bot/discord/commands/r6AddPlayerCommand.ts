@@ -95,7 +95,12 @@ export const r6AddPlayerCommand: SlashCommand = {
                     rank.tier,
                     rank.division,
                     rank.rp
-                ).catch(() => {});
+                ).catch((err) =>
+                    console.error(
+                        `[/r6-add] Failed to record initial rank for ${ubisoftId}:`,
+                        err
+                    )
+                );
             }
 
             await addR6PlayerToGuild(guildId, ubisoftId, interaction.user.id);

@@ -1,5 +1,5 @@
 import { db } from '../../../diana-league-bot/api/utils/db.js';
-import { R6_GAME_ID, type R6Player } from '../../types.js';
+import { type R6Player } from '../../types.js';
 
 export const getR6PlayerById = async (
     ubisoftId: string
@@ -22,14 +22,30 @@ export const getR6PlayerByName = async (
     return rowToR6Player(result.rows[0]) ?? null;
 };
 
-/** Look up a player's Ubisoft id by name (no platform required). */
+/**
+ * Look up a player's Ubisoft id by name.
+ *
+ * `guildId` scopes the lookup to players that guild actually tracks. Without
+ * it the `LIMIT 1` picks arbitrarily between same-named players on different
+ * platforms — Ubisoft names are only unique per platform, and the autocomplete
+ * that feeds this offers names alone — so `/r6-remove` could resolve the name
+ * to a row belonging to somebody else's server and report "not tracked here".
+ */
 export const getR6PlayerIdByName = async (
-    gameName: string
+    gameName: string,
+    guildId?: string
 ): Promise<string | null> => {
-    const result = await db.query(
-        `SELECT "ubisoftId" FROM r6_players WHERE "gameName" = $1 LIMIT 1`,
-        [gameName]
-    );
+    const result = guildId
+        ? await db.query(
+              `SELECT r."ubisoftId" FROM r6_players r
+               JOIN guild_r6_players grp ON grp."ubisoftId" = r."ubisoftId"
+               WHERE r."gameName" = $1 AND grp.guild_id = $2 LIMIT 1`,
+              [gameName, guildId]
+          )
+        : await db.query(
+              `SELECT "ubisoftId" FROM r6_players WHERE "gameName" = $1 LIMIT 1`,
+              [gameName]
+          );
     return result.rows[0]?.ubisoftId ?? null;
 };
 
@@ -159,6 +175,26 @@ export const getGuildsTrackingR6Player = async (
     return result.rows;
 };
 
+/**
+ * How many guilds track this player at all.
+ *
+ * Deliberately *not* `getGuildsTrackingR6Player(...).length`: that query exists
+ * to answer "where do I post", so it inner-joins `guild_config` and drops any
+ * guild with no notification channel set. Using it to answer "is anyone still
+ * tracking this player" counts those guilds as zero, and the caller then
+ * deletes the `r6_players` row — which cascades `guild_r6_players` and quietly
+ * untracks the player for servers that never asked.
+ */
+export const countGuildsTrackingR6Player = async (
+    ubisoftId: string
+): Promise<number> => {
+    const result = await db.query(
+        `SELECT COUNT(*)::int AS count FROM guild_r6_players WHERE "ubisoftId" = $1`,
+        [ubisoftId]
+    );
+    return result.rows[0]?.count ?? 0;
+};
+
 export const isR6PlayerInGuild = async (
     guildId: string,
     ubisoftId: string
@@ -194,30 +230,40 @@ export const removeR6PlayerFromGuild = async (
     return (result.rowCount ?? 0) > 0;
 };
 
+/**
+ * Record one rank observation.
+ *
+ * Writes `r6_rank_history` (migration 021), not the shared `rank_tracking`.
+ * That table's `entryParticipantId` is a foreign key into `summoners`, and a
+ * Ubisoft profile id is never a summoner — Siege players live in `r6_players`.
+ * Every write here used to raise a foreign key violation that the callers
+ * swallowed, so the history was silently empty. Not swallowed any more: with a
+ * table it can actually be written to, a failure is worth seeing.
+ */
 export const createR6RankHistory = async (
-    matchId: string,
+    syncId: string,
     ubisoftId: string,
     tier: string,
     division: number,
     rp: number
 ): Promise<void> => {
     await db.query(
-        `INSERT INTO rank_tracking
-            ("matchId", "entryParticipantId", "tier", "rank", "lp", "queueType", "game_id")
-         VALUES ($1, $2, $3, $4, $5, 'RANKED', $6)
-         ON CONFLICT ("matchId", "entryParticipantId") DO NOTHING`,
-        [matchId, ubisoftId, tier, String(division), rp, R6_GAME_ID]
+        `INSERT INTO r6_rank_history
+            ("syncId", "ubisoftId", tier, division, rp)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT ("syncId", "ubisoftId") DO NOTHING`,
+        [syncId, ubisoftId, tier, division, rp]
     );
 };
 
 export const getMostRecentR6Rank = async (
     ubisoftId: string
-): Promise<{ tier: string; rank: string; lp: number } | null> => {
+): Promise<{ tier: string; division: number; rp: number } | null> => {
     const result = await db.query(
-        `SELECT tier, rank, lp FROM rank_tracking
-         WHERE "entryParticipantId" = $1 AND game_id = $2
-         ORDER BY "lastUpdated" DESC LIMIT 1`,
-        [ubisoftId, R6_GAME_ID]
+        `SELECT tier, division, rp FROM r6_rank_history
+         WHERE "ubisoftId" = $1
+         ORDER BY "recordedAt" DESC LIMIT 1`,
+        [ubisoftId]
     );
     return result.rows[0] ?? null;
 };

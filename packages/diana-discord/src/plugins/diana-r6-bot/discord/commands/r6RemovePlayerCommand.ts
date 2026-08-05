@@ -5,7 +5,7 @@ import {
     getR6PlayerIdByName,
     removeR6PlayerFromGuild,
     deleteR6Player,
-    getGuildsTrackingR6Player,
+    countGuildsTrackingR6Player,
 } from 'diana-core';
 
 export const r6RemovePlayerCommand: SlashCommand = {
@@ -51,9 +51,11 @@ export const r6RemovePlayerCommand: SlashCommand = {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
-            const ubisoftId = await getR6PlayerIdByName(name);
+            const ubisoftId = await getR6PlayerIdByName(name, guildId);
             if (!ubisoftId) {
-                await interaction.editReply(`Player **${name}** not found.`);
+                await interaction.editReply(
+                    `**${name}** is not tracked in this server.`
+                );
                 return;
             }
 
@@ -66,9 +68,12 @@ export const r6RemovePlayerCommand: SlashCommand = {
             }
 
             // Nobody left tracking them: drop the player row too, so a stale
-            // profile is not polled forever on every tick.
-            const remaining = await getGuildsTrackingR6Player(ubisoftId);
-            if (remaining.length === 0) {
+            // profile is not polled forever on every tick. Counted straight
+            // off guild_r6_players — the "where do I post" query filters out
+            // guilds with no channel configured, and deleting on its say-so
+            // cascades this row away from servers that still track them.
+            const remaining = await countGuildsTrackingR6Player(ubisoftId);
+            if (remaining === 0) {
                 await deleteR6Player(ubisoftId).catch(() => {});
             }
 

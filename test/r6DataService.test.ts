@@ -2,7 +2,9 @@ import {
     parseRankLabel,
     parseLadder,
     selectRankedProfile,
+    selectRankedEntry,
     toSnapshot,
+    R6DataService,
 } from '../packages/diana-core/src/plugins/diana-r6-bot/api/utils/r6DataService';
 import { fallbackRankLadder } from '../packages/diana-core/src/plugins/diana-r6-bot/api/utils/rankService';
 
@@ -143,6 +145,35 @@ describe('selectRankedProfile', () => {
         expect(selectRankedProfile(body)?.rank_points).toBe(900);
     });
 
+    it('falls back to another board when ranked is present but empty', () => {
+        // Preferring `ranked` must not mean abandoning the whole platform
+        // family when it happens to carry no seasons — the casual board next
+        // to it is the only thing this player has.
+        const body = statsBody([
+            { board_id: 'ranked', full_profiles: [] },
+            {
+                board_id: 'casual',
+                full_profiles: [{ season_id: 40, profile: { rank_points: 7 } }],
+            },
+        ]);
+        expect(selectRankedProfile(body)?.rank_points).toBe(7);
+    });
+
+    it('keeps an entry that carries only season_statistics', () => {
+        // The counters are the whole point of the entry; one with no `profile`
+        // still has this season's kills and W/L in it.
+        const body = statsBody([
+            {
+                board_id: 'ranked',
+                full_profiles: [
+                    { season_id: 41, season_statistics: { kills: 12 } },
+                ],
+            },
+        ]);
+        expect(selectRankedEntry(body)?.season_statistics?.kills).toBe(12);
+        expect(selectRankedProfile(body)).toBeNull();
+    });
+
     it('returns null when there is nothing to read', () => {
         expect(selectRankedProfile(undefined)).toBeNull();
         expect(selectRankedProfile({})).toBeNull();
@@ -233,6 +264,100 @@ describe('toSnapshot', () => {
         ).toBeNull();
     });
 
+    it('reads counters from season_statistics when the profile has none', () => {
+        // r6data documents both spellings and does not say which a ranked
+        // board returns. Reading only `profile` renders a real player as
+        // 0 kills / 0W 0L with a null K/D, and stores that as the session
+        // baseline — silently, in both cases.
+        const seasonOnly = {
+            platform_families_full_profiles: [
+                {
+                    board_ids_full_profiles: [
+                        {
+                            board_id: 'ranked',
+                            full_profiles: [
+                                {
+                                    season_id: 41,
+                                    profile: { rank: 22, rank_points: 3200 },
+                                    season_statistics: {
+                                        kills: 900,
+                                        deaths: 600,
+                                        match_outcomes: {
+                                            wins: 40,
+                                            losses: 30,
+                                        },
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        } as never;
+        const snapshot = toSnapshot(account, seasonOnly, ladder, 'x', 'uplay');
+        expect(snapshot.stats).toEqual({
+            kills: 900,
+            deaths: 600,
+            wins: 40,
+            losses: 30,
+        });
+        expect(snapshot.kd).toBeCloseTo(1.5);
+        // The rank still comes off `profile` — only the counters fall back.
+        expect(snapshot.rank.rp).toBe(3200);
+    });
+
+    it('prefers the profile counters when both places carry them', () => {
+        const both = {
+            platform_families_full_profiles: [
+                {
+                    board_ids_full_profiles: [
+                        {
+                            board_id: 'ranked',
+                            full_profiles: [
+                                {
+                                    season_id: 41,
+                                    profile: { rank: 22, kills: 7, deaths: 1 },
+                                    season_statistics: { kills: 999 },
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        } as never;
+        expect(
+            toSnapshot(account, both, ladder, 'x', 'uplay').stats.kills
+        ).toBe(7);
+    });
+
+    it('reads a genuine zero as zero, not as a missing counter', () => {
+        // `firstNum` exists to tell "absent" from "0"; a player with 0 wins
+        // must not fall through to whatever season_statistics happens to say.
+        const zeroed = {
+            platform_families_full_profiles: [
+                {
+                    board_ids_full_profiles: [
+                        {
+                            board_id: 'ranked',
+                            full_profiles: [
+                                {
+                                    season_id: 41,
+                                    profile: { rank: 22, wins: 0 },
+                                    season_statistics: {
+                                        match_outcomes: { wins: 55 },
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        } as never;
+        expect(
+            toSnapshot(account, zeroed, ladder, 'x', 'uplay').stats.wins
+        ).toBe(0);
+    });
+
     it('never claims live presence, which Siege has no source for', () => {
         expect(
             toSnapshot(account, stats, ladder, 'x', 'uplay').isInGame
@@ -277,5 +402,51 @@ describe('toSnapshot', () => {
         expect(
             toSnapshot(account, offLadder, ladder, 'x', 'uplay').rank.tier
         ).toBe('Unranked');
+    });
+});
+
+describe('R6DataService.getRankLadder', () => {
+    const realFetch = global.fetch;
+    afterEach(() => {
+        global.fetch = realFetch;
+        jest.restoreAllMocks();
+    });
+
+    function respondOnce(bodies: unknown[]) {
+        let call = 0;
+        const mock = jest.fn(async () => ({
+            ok: true,
+            status: 200,
+            json: async () => bodies[Math.min(call++, bodies.length - 1)],
+        }));
+        global.fetch = mock as unknown as typeof fetch;
+        return mock;
+    }
+
+    const goodLadder = [{ id: 1, name: 'Copper V', min_mmr: 1000 }];
+
+    it('memoises a ladder it could parse', async () => {
+        const mock = respondOnce([goodLadder]);
+        const service = new R6DataService('key');
+
+        expect((await service.getRankLadder())[0]?.minRp).toBe(1000);
+        await service.getRankLadder();
+
+        expect(mock).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries after an unrecognised shape instead of pinning the fallback', async () => {
+        // The static fallback carries no RP thresholds by design, so memoising
+        // it would leave `getR6RpToNextRank` returning null for the life of the
+        // process. An unparseable `/api/ranks` is the likeliest failure here —
+        // it is the half of the vendor schema the docs do not pin down — so it
+        // has to recover on the next poll, not the next restart.
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const mock = respondOnce([{ nothing: 'useful' }, goodLadder]);
+        const service = new R6DataService('key');
+
+        expect((await service.getRankLadder())[0]?.minRp).toBeNull();
+        expect((await service.getRankLadder())[0]?.minRp).toBe(1000);
+        expect(mock).toHaveBeenCalledTimes(2);
     });
 });
