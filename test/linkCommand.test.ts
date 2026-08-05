@@ -127,6 +127,29 @@ jest.mock('twisted', () => ({
 }));
 
 jest.mock('diana-core', () => ({
+    // Moved out of the command by 022 so Meeps' identity API could share it.
+    // The real map, not a stub: `/link start` builds its region choices from
+    // its keys, so an empty one silently removes the option.
+    REGION_GROUPS: {
+        EU_WEST: 'EUROPE',
+        EU_EAST: 'EUROPE',
+        TURKEY: 'EUROPE',
+        RUSSIA: 'EUROPE',
+        AMERICA_NORTH: 'AMERICAS',
+        LAT_NORTH: 'AMERICAS',
+        LAT_SOUTH: 'AMERICAS',
+        BRAZIL: 'AMERICAS',
+        KOREA: 'ASIA',
+        JAPAN: 'ASIA',
+        OCEANIA: 'SEA',
+        SINGAPORE: 'SEA',
+    },
+    regionGroupFor: (region: string) =>
+        ({
+            EU_WEST: 'EUROPE',
+            AMERICA_NORTH: 'AMERICAS',
+            KOREA: 'ASIA',
+        })[region] ?? 'EUROPE',
     createLolService: () => ({
         getAccountByRiotId: getAccountByRiotIdMock,
         getSummonerByPUUID: getSummonerByPUUIDMock,
@@ -246,7 +269,8 @@ describe('/link start', () => {
         await linkCommand.execute(interaction as any);
 
         expect(createLinkChallengeMock).toHaveBeenCalledWith(
-            'discord-1',
+            // A subject since 022, and `/link` is always the Discord one.
+            { kind: 'discord_user', id: 'discord-1' },
             expect.objectContaining({ puuid: 'puuid-1' }),
             590
         );
@@ -392,7 +416,10 @@ describe('/link confirm', () => {
         const interaction = makeInteraction({ subcommand: 'confirm' });
         await linkCommand.execute(interaction as any);
 
-        expect(verifyLinkChallengeMock).toHaveBeenCalledWith('discord-1', 590);
+        expect(verifyLinkChallengeMock).toHaveBeenCalledWith(
+            { kind: 'discord_user', id: 'discord-1' },
+            590
+        );
         expect(replyText(interaction)).toContain('Louis#EUW');
     });
 

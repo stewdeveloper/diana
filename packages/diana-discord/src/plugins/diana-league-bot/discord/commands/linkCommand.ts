@@ -9,6 +9,8 @@ import {
     fetchProfileIconUrl,
     getLinkChallenge,
     getGuildAllowsTrustedLinks,
+    regionGroupFor,
+    REGION_GROUPS,
     resolveIdentity,
     verifyLinkChallenge,
 } from 'diana-core';
@@ -27,21 +29,6 @@ const lolService = createLolService();
  * into a client that is quite possibly mid-game - and a Discord interaction
  * cannot be held open that long.
  */
-
-const REGION_GROUPS: Record<string, string> = {
-    [Constants.Regions.EU_WEST]: 'EUROPE',
-    [Constants.Regions.EU_EAST]: 'EUROPE',
-    [Constants.Regions.TURKEY]: 'EUROPE',
-    [Constants.Regions.RUSSIA]: 'EUROPE',
-    [Constants.Regions.AMERICA_NORTH]: 'AMERICAS',
-    [Constants.Regions.LAT_NORTH]: 'AMERICAS',
-    [Constants.Regions.LAT_SOUTH]: 'AMERICAS',
-    [Constants.Regions.BRAZIL]: 'AMERICAS',
-    [Constants.Regions.KOREA]: 'ASIA',
-    [Constants.Regions.JAPAN]: 'ASIA',
-    [Constants.Regions.OCEANIA]: 'SEA',
-    [Constants.Regions.SINGAPORE]: 'SEA',
-};
 
 const regionChoices = Object.keys(REGION_GROUPS)
     .map((value) => ({ name: value.replace(/_/g, ' '), value }))
@@ -129,6 +116,9 @@ export const linkCommand: SlashCommand = {
     execute: async (interaction) => {
         const subcommand = interaction.options.getSubcommand();
         const discordUserId = interaction.user.id;
+        // Since 022 a challenge names who it is for. `/link` is always the
+        // Discord half; Meeps starts its own with a `meeps_user` subject.
+        const subject = { kind: 'discord_user' as const, id: discordUserId };
 
         // Ephemeral throughout. Linking is about one person's account, and the
         // handshake instructions are noise to everybody else in the channel.
@@ -163,7 +153,7 @@ export const linkCommand: SlashCommand = {
             }
 
             if (subcommand === 'confirm') {
-                const challenge = await getLinkChallenge(discordUserId);
+                const challenge = await getLinkChallenge(subject);
                 if (!challenge) {
                     // The sweep may have finished it already, which is the whole
                     // point of the sweep - so "no link in progress" would be a
@@ -196,7 +186,7 @@ export const linkCommand: SlashCommand = {
                 }
 
                 const outcome = await verifyLinkChallenge(
-                    discordUserId,
+                    subject,
                     profile.profileIconId
                 );
 
@@ -268,7 +258,7 @@ export const linkCommand: SlashCommand = {
             const region =
                 interaction.options.getString('region') ??
                 Constants.Regions.EU_WEST;
-            const regionGroup = REGION_GROUPS[region] ?? 'EUROPE';
+            const regionGroup = regionGroupFor(region);
 
             let account;
             try {
@@ -343,7 +333,7 @@ export const linkCommand: SlashCommand = {
 
             const requiredIcon = chooseChallengeIcon(currentIcon);
             await createLinkChallenge(
-                discordUserId,
+                subject,
                 {
                     puuid: account.puuid,
                     gameName: account.gameName,
