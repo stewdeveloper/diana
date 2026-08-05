@@ -106,12 +106,28 @@ function firstNum(...values: unknown[]): number {
     return 0;
 }
 
+const ROMAN_DIVISIONS: Record<string, number> = {
+    i: 1,
+    ii: 2,
+    iii: 3,
+    iv: 4,
+    v: 5,
+};
+
 /**
  * Split a ladder label like "Platinum II" or "Champion" into tier + division.
  *
- * Roman numerals only go to V here, which is the whole ladder — a label the
- * regex does not recognise keeps its full text as the tier and division 0,
- * so an unfamiliar rung still renders rather than disappearing.
+ * Roman numerals only go to V here, which is the whole ladder — a label this
+ * does not recognise keeps its full text as the tier and division 0, so an
+ * unfamiliar rung still renders rather than disappearing.
+ *
+ * Tokenised rather than matched against `/^(.*?)\s+(V|IV|I{1,3})$/i`, which
+ * CodeQL flagged as `js/polynomial-redos` (high): `.*?` and `\s+` can both
+ * consume a space, so a label that is a long run of them backtracks
+ * quadratically. The label comes straight off the provider's `/api/ranks`
+ * response — the one payload whose shape the vendor does not document — so it
+ * is exactly the input not to hand a quadratic matcher. `split` is linear and
+ * the behaviour is unchanged for every label either form recognises.
  */
 export function parseRankLabel(label: string | null | undefined): {
     tier: string;
@@ -120,20 +136,14 @@ export function parseRankLabel(label: string | null | undefined): {
     const raw = (label ?? '').trim();
     if (!raw) return { tier: 'Unranked', division: 0 };
 
-    const match = raw.match(/^(.*?)\s+(V|IV|I{1,3})$/i);
-    if (!match) return { tier: raw, division: 0 };
+    const parts = raw.split(/\s+/);
+    if (parts.length < 2) return { tier: raw, division: 0 };
 
-    const numerals: Record<string, number> = {
-        i: 1,
-        ii: 2,
-        iii: 3,
-        iv: 4,
-        v: 5,
-    };
-    return {
-        tier: (match[1] ?? '').trim(),
-        division: numerals[(match[2] ?? '').toLowerCase()] ?? 0,
-    };
+    const last = parts[parts.length - 1] ?? '';
+    const division = ROMAN_DIVISIONS[last.toLowerCase()];
+    if (division === undefined) return { tier: raw, division: 0 };
+
+    return { tier: parts.slice(0, -1).join(' '), division };
 }
 
 /**

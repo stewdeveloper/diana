@@ -42,6 +42,24 @@ describe('parseRankLabel', () => {
         });
     });
 
+    it('parses a pathological label in linear time', () => {
+        // js/polynomial-redos (high): the previous
+        // /^(.*?)\s+(V|IV|I{1,3})$/i let `.*?` and `\s+` both consume a
+        // space, so a label that is a long run of them backtracked
+        // quadratically. Ladder labels come off the provider's undocumented
+        // /api/ranks payload, so this is attacker-adjacent input.
+        const started = Date.now();
+        expect(parseRankLabel(`${' '.repeat(50_000)}X`).division).toBe(0);
+        expect(Date.now() - started).toBeLessThan(1000);
+    });
+
+    it('keeps the tier when the trailing token is not a division', () => {
+        expect(parseRankLabel('Copper VI')).toEqual({
+            tier: 'Copper VI',
+            division: 0,
+        });
+    });
+
     it('falls back to Unranked for missing input', () => {
         for (const value of [null, undefined, '', '   ']) {
             expect(parseRankLabel(value)).toEqual({
