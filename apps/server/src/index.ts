@@ -28,6 +28,7 @@ import {
     createLolService,
     leagueBotPlugin,
     apexBotPlugin,
+    r6BotPlugin,
 } from 'diana-core';
 import {
     registerSlashCommands,
@@ -35,11 +36,13 @@ import {
     setupAndStartDiscord,
     leagueDiscordCommands,
     apexDiscordCommands,
+    r6DiscordCommands,
     sendDirectMessage,
 } from 'diana-discord';
 import {
     createDianaPluginAdapter,
     createPathfinderPluginAdapter,
+    createAshPluginAdapter,
 } from './messageAdapter';
 import { createMeepsEventAdapter } from './meepsEventAdapter';
 import { commandApiRouter } from './commandApi';
@@ -187,6 +190,7 @@ async function main() {
     setExpressApp(app);
     setPluginMessageAdapter(leagueBotPlugin.id, createDianaPluginAdapter());
     setPluginMessageAdapter(apexBotPlugin.id, createPathfinderPluginAdapter());
+    setPluginMessageAdapter(r6BotPlugin.id, createAshPluginAdapter());
 
     // Structured events (DN-1). League only for now - the Apex plugin still
     // posts messages exclusively.
@@ -199,12 +203,16 @@ async function main() {
 
     registerSlashCommands([pingCommand, ...leagueDiscordCommands], 'diana');
     registerSlashCommands([...apexDiscordCommands], 'pathfinder');
+    registerSlashCommands([...r6DiscordCommands], 'ash');
 
     registerPlugin(leagueBotPlugin);
     await loadPlugin(leagueBotPlugin.id);
 
     registerPlugin(apexBotPlugin);
     await loadPlugin(apexBotPlugin.id);
+
+    registerPlugin(r6BotPlugin);
+    await loadPlugin(r6BotPlugin.id);
 
     // Session Recap (roadmap §7.1). Five minutes is the resolution on "the night
     // is over", which is already coarse: a recap cannot fire until a full idle

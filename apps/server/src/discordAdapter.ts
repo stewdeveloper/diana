@@ -1,6 +1,7 @@
 import type { MessageAdapter, MessagePayload, MessageTarget } from 'diana-core';
 import {
     createDiscordMessageAdapter,
+    getAshClient,
     getDianaClient,
     getPathfinderClient,
 } from 'diana-discord';
@@ -33,4 +34,9 @@ export function createPathfinderDiscordAdapter(): MessageAdapter {
     return wrapWithDisableCheck(
         createDiscordMessageAdapter(getPathfinderClient())
     );
+}
+
+/** Message adapter that sends via the Ash (Rainbow Six Siege) bot client. */
+export function createAshDiscordAdapter(): MessageAdapter {
+    return wrapWithDisableCheck(createDiscordMessageAdapter(getAshClient()));
 }
