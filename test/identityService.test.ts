@@ -452,6 +452,36 @@ describe('verifyLinkChallenge', () => {
         });
     });
 
+    it('attaches the Riot account to a meeps_user subject (022)', async () => {
+        // The case the pre-022 schema could not express: the identity a
+        // verified link lands on is the *subject's*, so a Meeps-started
+        // handshake joins the puuid to the Meeps user rather than to a Discord
+        // account they may not have.
+        queryMock
+            .mockResolvedValueOnce({
+                rows: [
+                    challenge({
+                        subject_kind: 'meeps_user',
+                        subject_id: 'meeps-1',
+                        required_icon: 590,
+                    }),
+                ],
+            })
+            .mockResolvedValueOnce({ rows: [account({ kind: 'meeps_user' })] })
+            .mockResolvedValueOnce({ rows: [] }) // linkAccount: getAccount
+            .mockResolvedValueOnce({ rows: [account()] }) // linkAccount: upsert
+            .mockResolvedValueOnce({ rows: [] }); // deleteLinkChallenge
+
+        const outcome = await verifyLinkChallenge(MEEPS_SUBJECT, 590, NOW);
+        expect(outcome).toEqual({
+            ok: true,
+            puuid: 'puuid-1',
+            identityId: 'id-1',
+        });
+        // The identity was looked up by the *subject*, not by a Discord id.
+        expect(queryMock.mock.calls[1][1]).toEqual(['meeps_user', 'meeps-1']);
+    });
+
     it('reports a mismatch with both icons, and leaves the challenge open', async () => {
         // Nearly always "not changed yet". Deleting would make the fix "start
         // again" rather than "wait a moment and retry".
