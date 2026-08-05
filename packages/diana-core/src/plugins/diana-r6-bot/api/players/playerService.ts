@@ -176,6 +176,36 @@ export const getGuildsTrackingR6Player = async (
 };
 
 /**
+ * Every squad tracking this player, for stamping `squadId` on emitted events.
+ *
+ * Siege players are not in `squad_summoners` — that table's `puuid` is a foreign
+ * key into `summoners`, and a Ubisoft profile id is never a summoner. So the
+ * squad is resolved the other way round, through the Discord guilds that track
+ * the player and the attachment that maps a guild to its squad. That is exactly
+ * the resolution `getOrCreateSquadForAttachment` performs for League, run in
+ * reverse.
+ *
+ * Deliberately *not* built on `getGuildsTrackingR6Player`: that query answers
+ * "where do I post", so it inner-joins `guild_config` and drops any guild with
+ * no notification channel. An event is a fact about the group and should be
+ * captured whether or not anywhere is configured to announce it.
+ */
+export const getSquadsTrackingR6Player = async (
+    ubisoftId: string
+): Promise<string[]> => {
+    const result = await db.query(
+        `SELECT DISTINCT sa.squad_id
+         FROM guild_r6_players grp
+         JOIN squad_attachments sa
+           ON sa.kind = 'discord_guild' AND sa.external_id = grp.guild_id
+         WHERE grp."ubisoftId" = $1
+         ORDER BY sa.squad_id ASC`,
+        [ubisoftId]
+    );
+    return result.rows.map((row: { squad_id: string }) => row.squad_id);
+};
+
+/**
  * How many guilds track this player at all.
  *
  * Deliberately *not* `getGuildsTrackingR6Player(...).length`: that query exists

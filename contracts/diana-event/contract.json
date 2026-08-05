@@ -7,8 +7,11 @@
         "milestone",
         "digest.weekly",
         "rotation.weekly",
-        "session.completed"
+        "session.completed",
+        "r6.match.completed",
+        "r6.rank.changed",
+        "r6.session.completed"
     ],
     "source": "packages/diana-core/src/core/eventTypes.ts",
-    "sourceSha256": "c7c492d87c9b77344580807bd5b085c963f09dd8dd790581e6f350343f7f7e03"
+    "sourceSha256": "2c093e5056e9d36ac8905f9952d0a6ad295cd672b9daca171a6c8a36df34a9c9"
 }

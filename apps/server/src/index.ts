@@ -192,9 +192,16 @@ async function main() {
     setPluginMessageAdapter(apexBotPlugin.id, createPathfinderPluginAdapter());
     setPluginMessageAdapter(r6BotPlugin.id, createAshPluginAdapter());
 
-    // Structured events (DN-1). League only for now - the Apex plugin still
-    // posts messages exclusively.
+    // Structured events (DN-1). League and Siege; the Apex plugin still posts
+    // messages exclusively, and should get the same `apex.*` treatment Siege
+    // has just had - see the namespacing note in core/eventTypes.ts.
+    //
+    // Registered explicitly even though `getEventAdapter()` would fall through
+    // to the default below anyway: which plugins are on the typed path is
+    // exactly the thing a reader comes to this file to find out, and inferring
+    // it from a fallback is how the comment above went stale in the first place.
     setPluginEventAdapter(leagueBotPlugin.id, createMeepsEventAdapter());
+    setPluginEventAdapter(r6BotPlugin.id, createMeepsEventAdapter());
 
     // The same adapter again, as the fallback for emitters that are not a
     // plugin. Session recaps are about a squad's evening, not about a game, so
