@@ -173,6 +173,13 @@ jobs:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     environment: production
     permissions:
+      # `actions: read` is what upload-sarif needs to call
+      # GET /repos/{owner}/{repo}/actions/runs/{run_id}. Without it the step
+      # fails with "Resource not accessible by integration" — and because the
+      # step is main-push-only, every PR stays green while main goes red. That
+      # took down the migrate job, which needs: [docker]. The secret-scan job
+      # above carries the same line for the same reason.
+      actions: read
       contents: read
       security-events: write
       id-token: write
