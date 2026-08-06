@@ -36,10 +36,13 @@ export const r6BotPlugin: DianaPlugin = {
     async onEnable(context) {
         const config = context.getConfig<R6BotConfig>();
         const adapter = context.getMessageAdapter();
+        // Two destinations, two shapes: Discord gets rendered embeds, Meeps gets
+        // typed `r6.*` events it draws its own cards from (DN-1).
+        const eventAdapter = context.getEventAdapter();
         const schedule = config?.rankCheckCron ?? '0 * * * *';
 
         context.registerCron(schedule, async () => {
-            await runR6Tick(adapter);
+            await runR6Tick(adapter, eventAdapter);
         });
 
         console.log(`[R6] Plugin enabled - rank checks scheduled: ${schedule}`);

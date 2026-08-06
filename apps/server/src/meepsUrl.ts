@@ -1,8 +1,13 @@
 /**
  * Shared URL handling for the Meeps webhook transports.
  *
- * Extracted from meepsAdapter.ts so the message and event adapters cannot drift
- * apart on how MEEPS_WEBHOOK_URL is interpreted.
+ * Originally extracted from the message adapter so it and the event adapter
+ * could not drift apart on how MEEPS_WEBHOOK_URL is interpreted. The message
+ * adapter has since been deleted — it POSTed to an endpoint Meeps does not
+ * serve — so `meepsEventAdapter.ts` is the only caller today. Kept as its own
+ * module because MEEPS_WEBHOOK_URL parsing is where the environment-specific
+ * reasoning below lives, and that reasoning belongs next to itself rather than
+ * inlined into a transport.
  */
 
 /**

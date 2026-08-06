@@ -11,6 +11,7 @@ import {
     getMostRecentR6Rank,
     countGuildsTrackingR6Player,
     getGuildsTrackingR6Player,
+    getSquadsTrackingR6Player,
     getR6PlayerIdByName,
     diffSnapshot,
 } from '../packages/diana-core/src/plugins/diana-r6-bot/api/players/playerService';
@@ -124,6 +125,43 @@ describe('r6PlayerService', () => {
             await getGuildsTrackingR6Player('ubi-abc');
             expect(sqlOf()).toContain('guild_config');
             expect(sqlOf()).toContain('channel_id IS NOT NULL');
+        });
+    });
+
+    describe('getSquadsTrackingR6Player', () => {
+        it('resolves squads through the guild attachment, not squad_summoners', async () => {
+            // squad_summoners.puuid is a foreign key into `summoners`, and a
+            // Ubisoft profile id is never a summoner — the same constraint that
+            // made the original rank_tracking write impossible. So a Siege
+            // player's squad is reached the other way round: the guilds that
+            // track them, then each guild's attachment.
+            queryMock.mockResolvedValueOnce({
+                rows: [{ squad_id: 'squad-a' }, { squad_id: 'squad-b' }],
+            });
+
+            await expect(getSquadsTrackingR6Player('ubi-abc')).resolves.toEqual(
+                ['squad-a', 'squad-b']
+            );
+            expect(sqlOf()).toContain('FROM guild_r6_players');
+            expect(sqlOf()).toContain('JOIN squad_attachments');
+            expect(sqlOf()).toContain("sa.kind = 'discord_guild'");
+            expect(sqlOf()).not.toContain('squad_summoners');
+            expect(queryMock.mock.calls[0]?.[1]).toEqual(['ubi-abc']);
+        });
+
+        it('does not drop guilds that have no notification channel', async () => {
+            // An event is a fact about the group. A squad whose Discord side is
+            // muted should still get the card in its Meeps space, so this must
+            // not inherit getGuildsTrackingR6Player's guild_config inner join.
+            await getSquadsTrackingR6Player('ubi-abc');
+            expect(sqlOf()).not.toContain('guild_config');
+            expect(sqlOf()).not.toContain('channel_id');
+        });
+
+        it('returns an empty list for a player no squad reaches', async () => {
+            await expect(getSquadsTrackingR6Player('ubi-abc')).resolves.toEqual(
+                []
+            );
         });
     });
 

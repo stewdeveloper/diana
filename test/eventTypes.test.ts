@@ -1,6 +1,7 @@
 import {
     buildMatchScopedEventId,
     buildPeriodicEventId,
+    buildR6EventId,
     buildSessionEventId,
     DIANA_EVENT_SCHEMA_VERSION,
     DIANA_EVENT_TYPES,
@@ -12,6 +13,22 @@ describe('Diana event wire contract', () => {
         expect(DIANA_EVENT_SCHEMA_VERSION).toBe(1);
         expect(DIANA_EVENT_TYPES.length).toBeGreaterThan(0);
         expect(new Set(DIANA_EVENT_TYPES).size).toBe(DIANA_EVENT_TYPES.length);
+    });
+
+    it('namespaces a second game rather than widening the League types', () => {
+        // The decision this pins: Siege gets `r6.*`, so `RankChangedEvent` can
+        // go on requiring matchId/puuid/summonerName for the one consumer that
+        // actually has them. Apex follows the same rule when it grows an
+        // adapter — the precedent is set here, not re-argued per game.
+        for (const type of [
+            'r6.match.completed',
+            'r6.rank.changed',
+            'r6.session.completed',
+        ]) {
+            expect(DIANA_EVENT_TYPES).toContain(type);
+        }
+        expect(DIANA_EVENT_TYPES).toContain('rank.changed');
+        expect(DIANA_EVENT_TYPES).toContain('session.completed');
     });
 });
 
@@ -192,6 +209,70 @@ describe('toIsoWeek', () => {
         const before = d.getTime();
         toIsoWeek(d);
         expect(d.getTime()).toBe(before);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Siege ids
+//
+// Siege has no match id to key on, so these are built from the provider's
+// cumulative counters instead. That makes them the one place where a *stale*
+// key is plausible rather than merely theoretical, which is why the RP
+// component below has its own test.
+// ---------------------------------------------------------------------------
+
+describe('buildR6EventId', () => {
+    const SQUAD = 'squad-1';
+    const UBI = 'ubi-1';
+
+    it('is deterministic, so a transport retry cannot insert a second row', () => {
+        expect(
+            buildR6EventId('r6.session.completed', SQUAD, UBI, 412, 3120)
+        ).toBe(buildR6EventId('r6.session.completed', SQUAD, UBI, 412, 3120));
+    });
+
+    it('carries no timestamp', () => {
+        // `createR6RankHistory` keys on `R6_SYNC_${ubisoftId}_${Date.now()}`.
+        // Copying that here would defeat Meeps' ON CONFLICT DO NOTHING and make
+        // every retry fan out a second card.
+        const id = buildR6EventId('r6.rank.changed', SQUAD, UBI, 412, 3120);
+        expect(id).not.toMatch(/\d{13}/);
+        expect(id).toBe('r6.rank.changed:squad-1:ubi-1:412:3120');
+    });
+
+    it('differs by squad, so a player on two squads produces a row for each', () => {
+        expect(
+            buildR6EventId('r6.rank.changed', 'squad-1', UBI, 412, 3120)
+        ).not.toBe(
+            buildR6EventId('r6.rank.changed', 'squad-2', UBI, 412, 3120)
+        );
+    });
+
+    it('differs by player and by type', () => {
+        expect(
+            buildR6EventId('r6.rank.changed', SQUAD, 'ubi-1', 412, 3120)
+        ).not.toBe(
+            buildR6EventId('r6.rank.changed', SQUAD, 'ubi-2', 412, 3120)
+        );
+        expect(
+            buildR6EventId('r6.rank.changed', SQUAD, UBI, 412, 3120)
+        ).not.toBe(
+            buildR6EventId('r6.session.completed', SQUAD, UBI, 412, 3120)
+        );
+    });
+
+    it('separates two sessions whose match counters did not move', () => {
+        // The real failure this guards. RP can move without wins or losses
+        // moving — an abandon, or a provider that lags one figure behind the
+        // other. On the match count alone the second session would key
+        // identically to the first and be dropped as a redelivery. The tick
+        // only emits when tier, division or RP changed, so RP always differs
+        // between two consecutive events for a player.
+        expect(
+            buildR6EventId('r6.session.completed', SQUAD, UBI, 412, 3120)
+        ).not.toBe(
+            buildR6EventId('r6.session.completed', SQUAD, UBI, 412, 3095)
+        );
     });
 });
 

@@ -62,10 +62,33 @@ the applied-key, so renaming would re-run those migrations against production.
   a match belongs to a player, not a server, and a player can be tracked by
   several. DN-2 introduces the portable scope that resolves this; the Meeps
   schema already has the column.
-- **The legacy `/api/diana-notify` message path still has no receiver.** It was
-  never built on the Meeps side. Left alone deliberately: it retires under MP-6
-  when Meeps renders events natively. The `supportUrl` serialisation gap the
-  roadmap flagged is moot for the same reason.
+- ~~**The legacy `/api/diana-notify` message path still has no receiver.**~~
+  Retired. `meepsAdapter.ts` is deleted and no plugin fans out to it any more —
+  see "Siege on the typed path" below. Until then all three plugins were firing
+  one 404 per post, swallowed with a `console.warn`.
+
+### Siege on the typed path (Aug 2026)
+
+The Ash plugin (#192) shipped with a message adapter and no event adapter, so
+nothing Siege reached `diana_events` at all. Part A of Meeps'
+`docs/r6-events-and-post-match.md`:
+
+| Part | What                                                                                                                             |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------- |
+| A    | Three `r6.*` discriminators and their variants in `core/eventTypes.ts`; `buildR6EventId`; contract regenerated                   |
+| B    | `getSquadsTrackingR6Player` — squad resolved through the guild attachment, since a Ubisoft id can never be in `squad_summoners`  |
+| C    | Emission in `rankMonitoringService`, once per squad after the Discord fan-out; `r6BotPlugin` threads `context.getEventAdapter()` |
+| D    | `test/r6RankMonitoring.test.ts` (new), extended `eventTypes` and `r6PlayerService` suites                                        |
+
+**Namespaced, not generalised.** `RankChangedEvent` requires `matchId`, `puuid`
+and `summonerName`; Siege has none of them, because r6data returns
+season-cumulative counters and no match record. Folding Siege in would have made
+those fields optional on a type League depends on — worse for the one consumer
+that does have the data. Apex follows the same rule when it gets an adapter.
+
+**`r6.match.completed` ships as a discriminator with no emitter.** Meeps must
+understand a type before Diana sends it, so the contract goes first; the
+one-match branch that emits it is Part B and is gated on the r6data rate limit.
 
 ### To finish Section 1
 

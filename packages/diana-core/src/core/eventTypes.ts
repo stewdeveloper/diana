@@ -17,6 +17,15 @@
  * A deterministic key plus `ON CONFLICT (event_id) DO NOTHING` on the consumer
  * makes redelivery provably safe. Use the builders at the bottom of this file;
  * do not hand-assemble ids.
+ *
+ * NAMESPACING
+ * The unprefixed discriminators (`match.completed`, `rank.changed`, …) are
+ * League's, and they require League's data: a `matchId`, a `puuid`, a champion,
+ * a game duration. A second game with none of those gets its own namespace
+ * (`r6.*`) rather than being folded in by making League's required fields
+ * optional — a type that guarantees nothing is worse for the one consumer that
+ * *does* have the data. Apex should follow the same rule when it grows an event
+ * adapter; this is the precedent, not a one-off for Siege.
  */
 
 /**
@@ -41,6 +50,9 @@ export const DIANA_EVENT_TYPES = [
     'digest.weekly',
     'rotation.weekly',
     'session.completed',
+    'r6.match.completed',
+    'r6.rank.changed',
+    'r6.session.completed',
 ] as const;
 
 export type DianaEventType = (typeof DIANA_EVENT_TYPES)[number];
@@ -310,6 +322,96 @@ export interface SessionCompletedEvent extends DianaEventBase {
     worstGame?: SessionLowPoint;
 }
 
+// ---------------------------------------------------------------------------
+// Rainbow Six: Siege (`r6.*`)
+// ---------------------------------------------------------------------------
+//
+// WHAT SIEGE CAN AND CANNOT SAY
+//
+// Everything below is derived from two r6data calls, `/api/stats` and
+// `/api/ranks`. `/api/stats` returns *season-cumulative counters* — kills,
+// deaths, wins, losses — plus the current rank. There is no match list, no
+// match id, no operator, no map and no teammates, because Siege has no
+// first-party developer API and the third-party provider does not expose one.
+//
+// So these events carry no `matchId` and no `puuid`. A Siege player is
+// identified by their Ubisoft profile id, and a "match" is inferred from the
+// counters moving rather than read from a match record. That is why the
+// League shapes could not be reused, and it is not a gap a future PR closes.
+
+/** The fields every Siege event carries about *who* and *where they now are*. */
+interface R6EventBase extends DianaEventBase {
+    /** Ubisoft profile id. Siege's stand-in for a puuid. */
+    ubisoftId: string;
+    /** Ubisoft display name at the time of the poll. */
+    gameName: string;
+    /** r6data platformType: 'uplay' | 'psn' | 'xbl'. */
+    platform: string;
+    /** Rank as rendered, e.g. "Platinum III". */
+    rankAfter: string;
+    tier: string;
+    /** 5 = V (lowest) … 1 = I (highest); 0 unranked. */
+    division: number;
+    /** Rank points after this observation. */
+    rp: number;
+    /** Signed RP movement since the previous poll. */
+    rpChange: number;
+    rankIconUrl?: string | null;
+    /**
+     * Cumulative ranked matches (`wins + losses`) after this observation.
+     *
+     * Monotonic and provider-supplied, so it doubles as the stable component of
+     * the event id — see `buildR6EventId`.
+     */
+    matchCount: number;
+}
+
+/**
+ * Exactly one ranked match completed between two polls.
+ *
+ * Emitted only when `winsGained + lossesGained === 1`, which is the single case
+ * where the counter diff is unambiguously attributable to one game. Anything
+ * wider is an `r6.session.completed`, which is the honest rendering of a gap
+ * that cannot be resolved into individual matches.
+ */
+export interface R6MatchCompletedEvent extends R6EventBase {
+    type: 'r6.match.completed';
+    win: boolean;
+    /** 'Victory' | 'Defeat', as rendered. */
+    result: string;
+    /** Kills in this match, from the counter diff. */
+    kills?: number | null;
+    /** Deaths in this match. Null until the deaths snapshot is persisted. */
+    deaths?: number | null;
+}
+
+/** The player crossed a division or tier boundary. */
+export interface R6RankChangedEvent extends R6EventBase {
+    type: 'r6.rank.changed';
+    direction: 'promoted' | 'demoted';
+    /** RP still needed for the next rung, when the ladder resolved one. */
+    rpToNextRank?: number | null;
+    nextRankName?: string | null;
+}
+
+/**
+ * A poll window that spanned more than one match — or none that we can pin.
+ *
+ * Deliberately *not* the same thing as `session.completed`, which is a League
+ * squad's voice evening. This one is one Siege player and the gap between two
+ * ticks, which is why it is namespaced and why the two must never be merged.
+ *
+ * The `*Gained` figures are null when the player has no snapshot baseline yet:
+ * a first sighting is not a session in which nothing happened, and a consumer
+ * must be able to tell those apart.
+ */
+export interface R6SessionCompletedEvent extends R6EventBase {
+    type: 'r6.session.completed';
+    killsGained: number | null;
+    winsGained: number | null;
+    lossesGained: number | null;
+}
+
 export type DianaEvent =
     | MatchCompletedEvent
     | RankChangedEvent
@@ -317,7 +419,10 @@ export type DianaEvent =
     | MilestoneEvent
     | WeeklyDigestEvent
     | RotationPostEvent
-    | SessionCompletedEvent;
+    | SessionCompletedEvent
+    | R6MatchCompletedEvent
+    | R6RankChangedEvent
+    | R6SessionCompletedEvent;
 
 /**
  * Emits events to a downstream consumer (Meeps today).
@@ -396,6 +501,41 @@ export function buildSessionEventId(
     startedAt: string | Date
 ): string {
     return `session.completed:${squadId}:${new Date(startedAt).toISOString()}`;
+}
+
+/**
+ * Siege events, which have no match id to key on.
+ *
+ * `matchCount` is the provider's cumulative `wins + losses`: monotonic, stable
+ * across retries, and the closest thing Siege has to "which game was this".
+ * Deliberately **not** `Date.now()` — `createR6RankHistory` builds a timestamped
+ * `R6_SYNC_${ubisoftId}_${Date.now()}` sync id, which is fine for a history row
+ * but would defeat the consumer's `ON CONFLICT (event_id) DO NOTHING` and make
+ * every transport retry insert a duplicate and fan out a second card.
+ *
+ * `rp` is in the key as well, and it is load-bearing rather than decorative.
+ * The tick only reaches an emission when tier, division or RP moved, so RP after
+ * the observation differs between any two consecutive events for a player —
+ * whereas `matchCount` does not. RP can move with the match counters standing
+ * still (an abandon, or a provider that lags one of the two figures), and on
+ * `matchCount` alone the second of those two sessions would key identically to
+ * the first and be silently dropped as a redelivery.
+ *
+ * The squad is part of the key for the same reason it is in
+ * `buildMatchScopedEventId`: one player can be in several squads and each needs
+ * its own row.
+ */
+export function buildR6EventId(
+    type: Extract<
+        DianaEventType,
+        'r6.match.completed' | 'r6.rank.changed' | 'r6.session.completed'
+    >,
+    squadId: string,
+    ubisoftId: string,
+    matchCount: number,
+    rp: number
+): string {
+    return `${type}:${squadId}:${ubisoftId}:${matchCount}:${rp}`;
 }
 
 /**

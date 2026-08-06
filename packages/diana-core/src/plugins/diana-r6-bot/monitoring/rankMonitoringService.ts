@@ -1,10 +1,16 @@
 import 'dotenv/config';
 import type { MessageAdapter } from '../../../core/pluginTypes.js';
+import type { EventAdapter } from '../../../core/eventTypes.js';
+import {
+    DIANA_EVENT_SCHEMA_VERSION,
+    buildR6EventId,
+} from '../../../core/eventTypes.js';
 import { createR6Service } from '../api/utils/r6ServiceFactory.js';
 import {
     getAllTrackedR6Players,
     getR6PlayerById,
     getGuildsTrackingR6Player,
+    getSquadsTrackingR6Player,
     updateR6PlayerRankAndSnapshot,
     createR6RankHistory,
     diffSnapshot,
@@ -22,7 +28,8 @@ import {
 const r6Service = createR6Service();
 
 export async function runR6Tick(
-    adapter: MessageAdapter | null | undefined
+    adapter: MessageAdapter | null | undefined,
+    eventAdapter?: EventAdapter | null
 ): Promise<void> {
     if (process.env.STOP_BOT === 'true') return;
 
@@ -39,7 +46,7 @@ export async function runR6Tick(
 
     for (const player of players) {
         try {
-            await processPlayer(player, adapter);
+            await processPlayer(player, adapter, eventAdapter);
         } catch (err) {
             console.error(`[R6] Error processing ${player.gameName}:`, err);
         }
@@ -48,7 +55,8 @@ export async function runR6Tick(
 
 async function processPlayer(
     tracked: Awaited<ReturnType<typeof getAllTrackedR6Players>>[number],
-    adapter: MessageAdapter | null | undefined
+    adapter: MessageAdapter | null | undefined,
+    eventAdapter?: EventAdapter | null
 ): Promise<void> {
     // r6data resolves players by name, not by profile id, so the stored
     // gameName is the lookup key. A player who renames on Ubisoft stops
@@ -60,14 +68,21 @@ async function processPlayer(
     const player = await getR6PlayerById(tracked.ubisoftId);
     if (!player) return;
 
-    await postSessionIfChanged(tracked.ubisoftId, player, profile, adapter);
+    await postSessionIfChanged(
+        tracked.ubisoftId,
+        player,
+        profile,
+        adapter,
+        eventAdapter
+    );
 }
 
 async function postSessionIfChanged(
     ubisoftId: string,
     player: NonNullable<Awaited<ReturnType<typeof getR6PlayerById>>>,
     profile: Awaited<ReturnType<typeof r6Service.getProfileByName>>,
-    adapter: MessageAdapter | null | undefined
+    adapter: MessageAdapter | null | undefined,
+    eventAdapter?: EventAdapter | null
 ): Promise<void> {
     const { tier: newTier, division: newDiv, rp: newRp } = profile.rank;
 
@@ -165,5 +180,133 @@ async function postSessionIfChanged(
                 discordChannelId: channelId,
             });
         }
+    }
+
+    await emitR6Events({
+        ubisoftId,
+        profile,
+        rankChanged: rankChanged && rankMovement !== 'no_change',
+        rankMovement,
+        newRankMsg,
+        rpChange,
+        rpToNextRank,
+        gained,
+        eventAdapter,
+    });
+}
+
+/**
+ * The typed event path (DN-1), beside the Discord embeds above.
+ *
+ * Emitted once per *squad*, not once per guild: an event is a fact about the
+ * group, not about a channel — the same call the League poller makes. Two
+ * consequences follow, and both are deliberate:
+ *
+ *   - It is **not** gated on `live_posting` or on a configured channel. Those
+ *     answer "should Discord announce this"; a squad's Meeps space should still
+ *     get the card when the Discord side is muted.
+ *   - A squad with no Discord guild attached gets nothing, because a Siege
+ *     player is only reachable through `guild_r6_players`. Meeps-only squads
+ *     wait on a roster table of their own.
+ *
+ * Wrapped in its own try/catch, and behind an adapter that never throws, so a
+ * consumer being unreachable cannot break Discord posting.
+ *
+ * `r6.match.completed` is not emitted here. It needs the one-match branch
+ * (`winsGained + lossesGained === 1`) and a five-minute poll for that branch to
+ * fire at all — Part B of docs/r6-events-and-post-match.md in Meeps. The
+ * discriminator exists in the contract already so Meeps can ship its card
+ * first, which is the rollout order the contract README mandates.
+ */
+async function emitR6Events({
+    ubisoftId,
+    profile,
+    rankChanged,
+    rankMovement,
+    newRankMsg,
+    rpChange,
+    rpToNextRank,
+    gained,
+    eventAdapter,
+}: {
+    ubisoftId: string;
+    profile: Awaited<ReturnType<typeof r6Service.getProfileByName>>;
+    rankChanged: boolean;
+    rankMovement: ReturnType<typeof determineR6RankMovement>;
+    newRankMsg: string;
+    rpChange: number;
+    rpToNextRank: { rpNeeded: number; nextRankName: string } | null;
+    gained: ReturnType<typeof diffSnapshot>;
+    eventAdapter?: EventAdapter | null;
+}): Promise<void> {
+    if (!eventAdapter) return;
+
+    try {
+        const squads = await getSquadsTrackingR6Player(ubisoftId);
+        if (squads.length === 0) return;
+
+        // r6data reports counters, never a match clock. The poll time is the
+        // only timestamp we have, and claiming anything more precise would be
+        // inventing one — the match happened somewhere in the preceding window.
+        const occurredAt = new Date().toISOString();
+        const matchCount = profile.stats.wins + profile.stats.losses;
+
+        const common = {
+            schemaVersion: DIANA_EVENT_SCHEMA_VERSION,
+            occurredAt,
+            ubisoftId,
+            gameName: profile.gameName,
+            platform: profile.platform,
+            rankAfter: newRankMsg,
+            tier: profile.rank.tier,
+            division: profile.rank.division,
+            rp: profile.rank.rp,
+            rpChange,
+            rankIconUrl: profile.rankIconUrl,
+            matchCount,
+        } as const;
+
+        for (const squadId of squads) {
+            // Mirrors the Discord branch above: a tick is either a rank change
+            // or a session, never both, so a squad never sees two cards for one
+            // poll.
+            if (rankChanged) {
+                await eventAdapter.emit({
+                    ...common,
+                    eventId: buildR6EventId(
+                        'r6.rank.changed',
+                        squadId,
+                        ubisoftId,
+                        matchCount,
+                        profile.rank.rp
+                    ),
+                    type: 'r6.rank.changed',
+                    squadId,
+                    direction:
+                        rankMovement === 'promoted' ? 'promoted' : 'demoted',
+                    rpToNextRank: rpToNextRank?.rpNeeded ?? null,
+                    nextRankName: rpToNextRank?.nextRankName ?? null,
+                });
+                continue;
+            }
+
+            await eventAdapter.emit({
+                ...common,
+                eventId: buildR6EventId(
+                    'r6.session.completed',
+                    squadId,
+                    ubisoftId,
+                    matchCount,
+                    profile.rank.rp
+                ),
+                type: 'r6.session.completed',
+                squadId,
+                killsGained: gained.killsGained,
+                winsGained: gained.winsGained,
+                lossesGained: gained.lossesGained,
+            });
+        }
+    } catch (err) {
+        console.error(`[R6] Failed to emit events for ${ubisoftId}:`, err);
     }
 }
