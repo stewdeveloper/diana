@@ -42,6 +42,16 @@ interface StatsProfile {
 }
 
 /**
+ * Charged once per request issued, before it is sent.
+ *
+ * Before rather than after, and per request rather than per successful request:
+ * a 429 or a 500 costs quota at the provider exactly as a 200 does, and a meter
+ * that only counted successes would speed up precisely when the provider was
+ * pushing back.
+ */
+export type R6CallMeter = (calls: number) => void;
+
+/**
  * One season on one board.
  *
  * r6data reports the same four counters in two places, and which one is
@@ -251,6 +261,10 @@ export function toSnapshot(
         deaths: firstNum(profile?.deaths, seasonStats?.deaths),
         wins: firstNum(profile?.wins, outcomes?.wins),
         losses: firstNum(profile?.losses, outcomes?.losses),
+        // Singular on `profile`, plural under `match_outcomes` — the vendor
+        // spells the same counter both ways, exactly as it does for the four
+        // above, which is why both are read.
+        abandons: firstNum(profile?.abandon, outcomes?.abandons),
     };
 
     return {
@@ -277,10 +291,12 @@ export function toSnapshot(
 
 export class R6DataService implements IR6Service {
     private readonly apiKey: string;
+    private readonly meter: R6CallMeter;
     private ladderPromise: Promise<R6RankRung[]> | null = null;
 
-    constructor(apiKey: string) {
+    constructor(apiKey: string, meter: R6CallMeter = () => {}) {
         this.apiKey = apiKey;
+        this.meter = meter;
     }
 
     private async fetch<T>(
@@ -291,6 +307,11 @@ export class R6DataService implements IR6Service {
         for (const [key, value] of Object.entries(params)) {
             url.searchParams.set(key, value);
         }
+
+        // Charged here, in the one place every request passes through. Anywhere
+        // else and the next endpoint added to this class would be free by
+        // default, which for a monthly cap is the wrong default.
+        this.meter(1);
 
         const response = await fetch(url.toString(), {
             headers: { 'api-key': this.apiKey, Accept: 'application/json' },
@@ -361,6 +382,7 @@ export class R6DataService implements IR6Service {
         return this.ladderPromise;
     }
 
+    /** Two requests: resolve the account, then read the stats. */
     async getProfileByName(
         name: string,
         platform: string
@@ -371,14 +393,49 @@ export class R6DataService implements IR6Service {
                 nameOnPlatform: name,
                 platformType: platform,
             }),
-            this.fetch<StatsResponse>('/api/stats', {
-                type: 'stats',
-                nameOnPlatform: name,
-                platformType: platform,
-                platform_families: platform === 'uplay' ? 'pc' : 'console',
-            }),
+            this.fetchStats(name, platform),
             this.getRankLadder(),
         ]);
         return toSnapshot(account, stats, ladder, name, platform);
+    }
+
+    /**
+     * One request: the stats, with the account taken from the stored row.
+     *
+     * This is the poller's path, and halving its cost is what makes a 5-minute
+     * cadence affordable at all — see the arithmetic in `r6Budget.ts`. The id and
+     * display name are synthesised into the same `AccountInfoResponse` shape
+     * `getProfileByName` would have fetched, so `toSnapshot` cannot tell the two
+     * callers apart and there is one mapping to keep correct rather than two.
+     */
+    async getTrackedProfile(player: {
+        ubisoftId: string;
+        gameName: string;
+        platform: string;
+    }): Promise<R6ProfileSnapshot> {
+        const [stats, ladder] = await Promise.all([
+            this.fetchStats(player.gameName, player.platform),
+            this.getRankLadder(),
+        ]);
+        return toSnapshot(
+            {
+                profile_id: player.ubisoftId,
+                username: player.gameName,
+                platform: player.platform,
+            },
+            stats,
+            ladder,
+            player.gameName,
+            player.platform
+        );
+    }
+
+    private fetchStats(name: string, platform: string): Promise<StatsResponse> {
+        return this.fetch<StatsResponse>('/api/stats', {
+            type: 'stats',
+            nameOnPlatform: name,
+            platformType: platform,
+            platform_families: platform === 'uplay' ? 'pc' : 'console',
+        });
     }
 }

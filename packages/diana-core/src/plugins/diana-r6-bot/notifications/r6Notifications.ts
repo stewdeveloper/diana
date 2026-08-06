@@ -82,6 +82,121 @@ export async function notifyR6RankChange(
     return sendWithAdapter(adapter, discordChannelId, message, 'rank change');
 }
 
+// ─── Single Match ─────────────────────────────────────────────────────────────
+//
+// Part B of Meeps' docs/r6-events-and-post-match.md, and the sparsest embed in
+// the plugin on purpose.
+//
+// Siege has no first-party developer API and the third-party provider returns
+// season-cumulative counters, so there is no match record to read: no operator,
+// no map, no teammates, no duration, no per-match score. What this embed says is
+// everything a single match *can* be known to have been — outcome, RP swing,
+// resulting rank, and the kills and deaths attributable to it — and that is
+// accepted deliberately rather than treated as a first cut. The one thing it
+// must not do is imply more precision than the inference supports.
+
+interface MatchInput {
+    playerName: string;
+    /** Won, lost, or — when null — abandoned. */
+    win: boolean | null;
+    rpChange: number;
+    newRankMsg: string;
+    rankIconUrl?: string | null;
+    /** Kills in this match. Null when the player has no kills baseline. */
+    kills: number | null;
+    /** Deaths in this match. Null when the deaths baseline predates 023. */
+    deaths: number | null;
+    discordChannelId: string;
+}
+
+/** 'Victory' | 'Defeat' | 'Abandoned' — the one place the wording is decided. */
+export function r6MatchResultLabel(win: boolean | null): string {
+    if (win === true) return 'Victory';
+    if (win === false) return 'Defeat';
+    return 'Abandoned';
+}
+
+export function buildR6MatchMessage({
+    playerName,
+    win,
+    rpChange,
+    newRankMsg,
+    rankIconUrl,
+    kills,
+    deaths,
+}: Omit<MatchInput, 'discordChannelId'>): MessagePayload {
+    const result = r6MatchResultLabel(win);
+    const rpSign = rpChange > 0 ? '+' : '';
+
+    // Outcome colours the embed, not the tier. On the session and rank-change
+    // embeds the tier is the subject; here the subject is "did you win", and a
+    // Platinum player losing should not get the same cheerful teal as one
+    // winning. An abandon is neither, so it takes the tier colour.
+    const tier = newRankMsg.split(' ')[0] ?? '';
+    const colorHex =
+        win === true
+            ? 0x2ecc71
+            : win === false
+              ? 0xe74c3c
+              : (r6RankColors.get(tier) ?? 0x95a5a6);
+
+    const fields: MessagePayload['fields'] = [
+        {
+            name: '🔄 **RP Change**',
+            value: `**${rpSign}${rpChange} RP**`,
+            inline: true,
+        },
+        {
+            name: '🏅 **Rank**',
+            value: `**${newRankMsg}**`,
+            inline: true,
+        },
+    ];
+
+    // Both halves or neither. "8 / —" is not a K/D, and a player whose deaths
+    // baseline predates migration 023 legitimately has one poll in that state.
+    if (kills !== null && deaths !== null) {
+        fields.push({
+            name: '⚔️ **K / D**',
+            value: `**${kills} / ${deaths}**`,
+            inline: true,
+        });
+    } else if (kills !== null) {
+        fields.push({
+            name: '⚔️ **Kills**',
+            value: `**${kills}**`,
+            inline: true,
+        });
+    }
+
+    return {
+        title:
+            win === true
+                ? '🏆 **Victory!**'
+                : win === false
+                  ? '💀 **Defeat**'
+                  : '🚪 **Match Abandoned**',
+        description:
+            win === null
+                ? `${playerName} abandoned a ranked match in Rainbow Six Siege.`
+                : `${playerName} finished a ranked match in Rainbow Six Siege.`,
+        colorHex,
+        thumbnailUrl: rankIconUrl ?? undefined,
+        fields,
+        footer: `Rainbow Six Siege · ${result}`,
+        timestamp: new Date().toISOString(),
+    };
+}
+
+export async function notifyR6Match(
+    adapter: MessageAdapter | null | undefined,
+    input: MatchInput
+): Promise<boolean> {
+    const { discordChannelId, ...payload } = input;
+    const message = buildR6MatchMessage(payload);
+    return sendWithAdapter(adapter, discordChannelId, message, 'match');
+}
+
 // ─── Session Summary ──────────────────────────────────────────────────────────
 
 interface SessionInput {
@@ -93,6 +208,8 @@ interface SessionInput {
     killsGained: number | null;
     winsGained: number | null;
     lossesGained: number | null;
+    /** Abandons in the window, counted apart from losses. */
+    abandonsGained?: number | null;
     discordChannelId: string;
 }
 
@@ -104,6 +221,7 @@ export function buildR6SessionMessage({
     killsGained,
     winsGained,
     lossesGained,
+    abandonsGained = null,
 }: Omit<SessionInput, 'discordChannelId'>): MessagePayload {
     const tier = newRankMsg.split(' ')[0] ?? '';
     const colorHex = r6RankColors.get(tier) ?? 0x95a5a6;
@@ -129,13 +247,25 @@ export function buildR6SessionMessage({
     const anyNonZero =
         (killsGained ?? 0) > 0 ||
         (winsGained ?? 0) > 0 ||
-        (lossesGained ?? 0) > 0;
+        (lossesGained ?? 0) > 0 ||
+        (abandonsGained ?? 0) > 0;
 
     if (hasBaseline && anyNonZero) {
-        if ((winsGained ?? 0) > 0 || (lossesGained ?? 0) > 0) {
+        if (
+            (winsGained ?? 0) > 0 ||
+            (lossesGained ?? 0) > 0 ||
+            (abandonsGained ?? 0) > 0
+        ) {
+            // Abandons are appended rather than folded into losses: a night that
+            // was 2W 1L plus a disconnect is not a 2W 2L night, and the RP
+            // arithmetic only reconciles if the abandon is visible.
+            const record = `${winsGained ?? 0}W ${lossesGained ?? 0}L`;
             fields.push({
                 name: '📊 **W / L**',
-                value: `**${winsGained ?? 0}W ${lossesGained ?? 0}L**`,
+                value:
+                    (abandonsGained ?? 0) > 0
+                        ? `**${record}** · ${abandonsGained} abandoned`
+                        : `**${record}**`,
                 inline: true,
             });
         }

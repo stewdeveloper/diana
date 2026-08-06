@@ -30,10 +30,23 @@ export interface R6Player {
     lastUpdated: string;
     /** Lifetime ranked kills (null = not yet captured). */
     killsSnapshot: number | null;
+    /** Lifetime ranked deaths (null = not yet captured). */
+    deathsSnapshot: number | null;
     /** Lifetime ranked wins (null = not yet captured). */
     winsSnapshot: number | null;
     /** Lifetime ranked losses (null = not yet captured). */
     lossesSnapshot: number | null;
+    /** Lifetime ranked abandons (null = not yet captured). */
+    abandonsSnapshot: number | null;
+    /**
+     * When a call was last spent on this player (migration 023).
+     *
+     * Not `lastUpdated`, which records when the *rank* last changed. Budgeting
+     * needs "when did I last pay for a reading", which is most polls.
+     */
+    lastPolledAt: string | null;
+    /** Poll this player at the active cadence until here. See r6PollScheduler. */
+    activeUntil: string | null;
 }
 
 export interface R6Rank {
@@ -42,12 +55,21 @@ export interface R6Rank {
     rp: number;
 }
 
-/** Lifetime ranked counters, used to diff one session against the last poll. */
+/**
+ * Lifetime ranked counters, used to diff one session against the last poll.
+ *
+ * `abandons` is a third match outcome, not a subset of `losses`. r6data reports
+ * it separately, and it is the reason RP can move while wins and losses both
+ * stand still — without it, an abandoned match is indistinguishable from a match
+ * that never happened, and the one-match branch would read an abandon as a
+ * session in which nothing occurred.
+ */
 export interface R6StatSnapshot {
     kills: number;
     deaths: number;
     wins: number;
     losses: number;
+    abandons: number;
 }
 
 /**
@@ -93,16 +115,52 @@ export interface IR6Service {
         name: string,
         platform: string
     ): Promise<R6ProfileSnapshot>;
+    /**
+     * The same snapshot for a player already in `r6_players`, at half the cost.
+     *
+     * `getProfileByName` spends two requests: one to turn a name into a Ubisoft
+     * profile id and display name, one for the stats. The poller already holds
+     * both — they are columns on the row it just read — so for a tracked player
+     * the first request buys nothing but a rename check, and at 3,000 requests a
+     * month (see `api/utils/r6Budget.ts`) paying it doubles the cost of the
+     * entire feature. Registration still uses `getProfileByName`, because there
+     * the id is exactly what is not yet known.
+     *
+     * The trade is explicit: a player who renames on Ubisoft keeps their stored
+     * `gameName` on cards until they are re-added. Lookup was already by name
+     * and already broke on a rename, so this loses a display-name refresh, not a
+     * working case.
+     */
+    getTrackedProfile(player: {
+        ubisoftId: string;
+        gameName: string;
+        platform: string;
+    }): Promise<R6ProfileSnapshot>;
     /** The ranked ladder, provider-supplied and cached by the implementation. */
     getRankLadder(): Promise<R6RankRung[]>;
 }
 
 /** R6 bot plugin configuration. */
 export interface R6BotConfig {
-    /** Cron schedule for rank polling. */
+    /**
+     * Cron schedule for the poll heartbeat.
+     *
+     * This is no longer the poll cadence. The heartbeat only asks *who is due*;
+     * the cadence is per-player and lives in the three settings below, because a
+     * single interval cannot both fit 3,000 calls a month and be narrow enough
+     * to resolve individual matches. Running the heartbeat faster than
+     * `activePollMinutes` costs nothing — a tick with nobody due spends no
+     * requests.
+     */
     rankCheckCron: string;
     /** Default Discord channel ID for notifications. */
     defaultDiscordChannelId?: string;
+    /** Minutes between polls while a player looks mid-session. */
+    activePollMinutes?: number;
+    /** Minutes between polls while nothing has moved. */
+    idlePollMinutes?: number;
+    /** How long movement keeps a player on the active cadence. */
+    activeWindowMinutes?: number;
 }
 
 export const R6_GAME_ID = 'rainbow_six_siege';

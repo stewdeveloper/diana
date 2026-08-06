@@ -1,5 +1,5 @@
 import { db } from '../../../diana-league-bot/api/utils/db.js';
-import { type R6Player } from '../../types.js';
+import { type R6Player, type R6StatSnapshot } from '../../types.js';
 
 export const getR6PlayerById = async (
     ubisoftId: string
@@ -76,31 +76,63 @@ export const createR6Player = async (data: {
     return rowToR6Player(result.rows[0])!;
 };
 
-/** Update rank and store the current stat snapshot for session diffing. */
+/**
+ * Update rank and store the current stat snapshot for session diffing.
+ *
+ * Takes the whole `R6StatSnapshot` rather than a positional counter list. It was
+ * three counters and is now five, and the previous signature had `kills, wins,
+ * losses` as three adjacent numbers — adding `deaths` between them was a silent
+ * mis-wiring waiting to happen at the one call site.
+ */
 export const updateR6PlayerRankAndSnapshot = async (
     ubisoftId: string,
     tier: string,
     division: number,
     rp: number,
-    killsSnapshot: number,
-    winsSnapshot: number,
-    lossesSnapshot: number
+    snapshot: R6StatSnapshot
 ): Promise<void> => {
     await db.query(
         `UPDATE r6_players
          SET tier = $1, division = $2, rp = $3,
-             kills_snapshot = $4, wins_snapshot = $5, losses_snapshot = $6,
+             kills_snapshot = $4, deaths_snapshot = $5,
+             wins_snapshot = $6, losses_snapshot = $7,
+             abandons_snapshot = $8,
              "lastUpdated" = NOW()
-         WHERE "ubisoftId" = $7`,
+         WHERE "ubisoftId" = $9`,
         [
             tier,
             division,
             rp,
-            killsSnapshot,
-            winsSnapshot,
-            lossesSnapshot,
+            snapshot.kills,
+            snapshot.deaths,
+            snapshot.wins,
+            snapshot.losses,
+            snapshot.abandons,
             ubisoftId,
         ]
+    );
+};
+
+/**
+ * Record that a call was spent on this player, and where their active window
+ * now sits (migration 023).
+ *
+ * Separate from `updateR6PlayerRankAndSnapshot` because it must happen on *every*
+ * poll, including the overwhelming majority that find nothing changed and return
+ * before the snapshot write. Folding the two together would leave a player whose
+ * rank never moves with a null `last_polled_at` forever, and therefore always
+ * due — the poller would spend its entire budget on the quietest player in the
+ * table.
+ */
+export const markR6PlayerPolled = async (
+    ubisoftId: string,
+    activeUntil: Date | null
+): Promise<void> => {
+    await db.query(
+        `UPDATE r6_players
+         SET last_polled_at = NOW(), active_until = $1
+         WHERE "ubisoftId" = $2`,
+        [activeUntil, ubisoftId]
     );
 };
 
@@ -298,26 +330,53 @@ export const getMostRecentR6Rank = async (
     return result.rows[0] ?? null;
 };
 
+export interface R6SnapshotDiff {
+    killsGained: number | null;
+    deathsGained: number | null;
+    winsGained: number | null;
+    lossesGained: number | null;
+    abandonsGained: number | null;
+}
+
 /**
- * Wins/losses/kills gained since the stored snapshot.
+ * Counters gained since the stored snapshot.
  *
  * Returns nulls the first time a player is seen — a snapshot of `null` means
  * "no baseline", which is not the same as "played a session and gained
  * nothing", and the notification renders the two differently.
+ *
+ * Each counter is nulled independently, and that matters more after 023 than it
+ * did before: a player tracked before the migration has kills, wins and losses
+ * baselines but no deaths or abandons one. So their next poll legitimately
+ * reports a real W/L with a null deaths figure, and the match card shows no K/D
+ * rather than inventing a zero. It heals itself on the poll after that.
  */
 export function diffSnapshot(
-    player: Pick<R6Player, 'killsSnapshot' | 'winsSnapshot' | 'lossesSnapshot'>,
-    current: { kills: number; wins: number; losses: number }
-): {
-    killsGained: number | null;
-    winsGained: number | null;
-    lossesGained: number | null;
-} {
+    player: Pick<
+        R6Player,
+        | 'killsSnapshot'
+        | 'deathsSnapshot'
+        | 'winsSnapshot'
+        | 'lossesSnapshot'
+        | 'abandonsSnapshot'
+    >,
+    current: {
+        kills: number;
+        deaths: number;
+        wins: number;
+        losses: number;
+        abandons: number;
+    }
+): R6SnapshotDiff {
     return {
         killsGained:
             player.killsSnapshot === null
                 ? null
                 : current.kills - player.killsSnapshot,
+        deathsGained:
+            player.deathsSnapshot === null
+                ? null
+                : current.deaths - player.deathsSnapshot,
         winsGained:
             player.winsSnapshot === null
                 ? null
@@ -326,6 +385,10 @@ export function diffSnapshot(
             player.lossesSnapshot === null
                 ? null
                 : current.losses - player.lossesSnapshot,
+        abandonsGained:
+            player.abandonsSnapshot === null
+                ? null
+                : current.abandons - player.abandonsSnapshot,
     };
 }
 
@@ -342,7 +405,11 @@ function rowToR6Player(row: any): R6Player | null {
         discordChannelId: row.discordChannelId ?? null,
         lastUpdated: row.lastUpdated,
         killsSnapshot: row.kills_snapshot ?? null,
+        deathsSnapshot: row.deaths_snapshot ?? null,
         winsSnapshot: row.wins_snapshot ?? null,
         lossesSnapshot: row.losses_snapshot ?? null,
+        abandonsSnapshot: row.abandons_snapshot ?? null,
+        lastPolledAt: row.last_polled_at ?? null,
+        activeUntil: row.active_until ?? null,
     };
 }

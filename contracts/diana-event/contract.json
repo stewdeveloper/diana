@@ -13,5 +13,5 @@
         "r6.session.completed"
     ],
     "source": "packages/diana-core/src/core/eventTypes.ts",
-    "sourceSha256": "2c093e5056e9d36ac8905f9952d0a6ad295cd672b9daca171a6c8a36df34a9c9"
+    "sourceSha256": "a0f16b27fe597d5a890425a9852c8fc053834f61760888472ffa9b1292814505"
 }
