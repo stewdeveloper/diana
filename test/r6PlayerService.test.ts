@@ -195,15 +195,19 @@ describe('r6PlayerService', () => {
                 diffSnapshot(
                     {
                         killsSnapshot: null,
+                        deathsSnapshot: null,
                         winsSnapshot: null,
                         lossesSnapshot: null,
+                        abandonsSnapshot: null,
                     },
-                    { kills: 10, wins: 2, losses: 1 }
+                    { kills: 10, deaths: 8, wins: 2, losses: 1, abandons: 0 }
                 )
             ).toEqual({
                 killsGained: null,
+                deathsGained: null,
                 winsGained: null,
                 lossesGained: null,
+                abandonsGained: null,
             });
         });
 
@@ -212,12 +216,57 @@ describe('r6PlayerService', () => {
                 diffSnapshot(
                     {
                         killsSnapshot: 100,
+                        deathsSnapshot: 90,
                         winsSnapshot: 20,
                         lossesSnapshot: 15,
+                        abandonsSnapshot: 1,
                     },
-                    { kills: 112, wins: 22, losses: 16 }
+                    {
+                        kills: 112,
+                        deaths: 94,
+                        wins: 22,
+                        losses: 16,
+                        abandons: 1,
+                    }
                 )
-            ).toEqual({ killsGained: 12, winsGained: 2, lossesGained: 1 });
+            ).toEqual({
+                killsGained: 12,
+                deathsGained: 4,
+                winsGained: 2,
+                lossesGained: 1,
+                abandonsGained: 0,
+            });
+        });
+
+        it('nulls each counter independently, which migration 023 relies on', () => {
+            // A player tracked before 023 has kills/wins/losses baselines and no
+            // deaths or abandons one. Nulling the whole diff whenever any counter
+            // is missing would suppress a real match card for that poll; nulling
+            // them one at a time reports the W/L it does know, and no K/D.
+            expect(
+                diffSnapshot(
+                    {
+                        killsSnapshot: 100,
+                        deathsSnapshot: null,
+                        winsSnapshot: 20,
+                        lossesSnapshot: 15,
+                        abandonsSnapshot: null,
+                    },
+                    {
+                        kills: 108,
+                        deaths: 94,
+                        wins: 21,
+                        losses: 15,
+                        abandons: 0,
+                    }
+                )
+            ).toEqual({
+                killsGained: 8,
+                deathsGained: null,
+                winsGained: 1,
+                lossesGained: 0,
+                abandonsGained: null,
+            });
         });
     });
 });

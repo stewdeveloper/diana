@@ -369,19 +369,41 @@ interface R6EventBase extends DianaEventBase {
 /**
  * Exactly one ranked match completed between two polls.
  *
- * Emitted only when `winsGained + lossesGained === 1`, which is the single case
- * where the counter diff is unambiguously attributable to one game. Anything
- * wider is an `r6.session.completed`, which is the honest rendering of a gap
- * that cannot be resolved into individual matches.
+ * Emitted only when `winsGained + lossesGained + abandonsGained === 1`, which is
+ * the single case where the counter diff is unambiguously attributable to one
+ * game. Anything wider is an `r6.session.completed`, which is the honest
+ * rendering of a gap that cannot be resolved into individual matches.
+ *
+ * Note what makes this event *possible* rather than merely defined: the poll
+ * window has to be about one match wide for the diff to come out at one, and the
+ * provider's plan allows 3,000 requests a month across 3 players. Diana spends
+ * them adaptively — fast while a player looks mid-session, slowly otherwise — so
+ * this event is common during an evening and absent outside one. A consumer
+ * should treat `r6.session.completed` as the normal case and this as the good
+ * one, not the other way round.
  */
 export interface R6MatchCompletedEvent extends R6EventBase {
     type: 'r6.match.completed';
-    win: boolean;
-    /** 'Victory' | 'Defeat', as rendered. */
+    /**
+     * Won, lost, or — when `null` — abandoned.
+     *
+     * Three-valued rather than boolean because Siege has three outcomes and the
+     * provider counts abandons separately from losses. An abandon is the reason
+     * RP can move while wins and losses both stand still, so collapsing it into
+     * `win: false` would report a defeat that did not happen. `result` carries
+     * the rendered word for all three.
+     */
+    win: boolean | null;
+    /** 'Victory' | 'Defeat' | 'Abandoned', as rendered. */
     result: string;
     /** Kills in this match, from the counter diff. */
     kills?: number | null;
-    /** Deaths in this match. Null until the deaths snapshot is persisted. */
+    /**
+     * Deaths in this match.
+     *
+     * Null for a player whose deaths baseline predates the snapshot column, which
+     * is one poll's worth of transition and then never again.
+     */
     deaths?: number | null;
 }
 
@@ -410,6 +432,14 @@ export interface R6SessionCompletedEvent extends R6EventBase {
     killsGained: number | null;
     winsGained: number | null;
     lossesGained: number | null;
+    /**
+     * Abandons in the window, counted separately from losses.
+     *
+     * Optional rather than required, unlike the three above: it is additive, and
+     * a consumer built against the shape this event shipped with must keep
+     * rendering without it.
+     */
+    abandonsGained?: number | null;
 }
 
 export type DianaEvent =

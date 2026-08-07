@@ -303,6 +303,7 @@ describe('toSnapshot', () => {
                                         match_outcomes: {
                                             wins: 40,
                                             losses: 30,
+                                            abandons: 2,
                                         },
                                     },
                                 },
@@ -318,6 +319,9 @@ describe('toSnapshot', () => {
             deaths: 600,
             wins: 40,
             losses: 30,
+            // Spelled `abandons` under `match_outcomes` and `abandon` on
+            // `profile`. Both are read, for the same reason the four above are.
+            abandons: 2,
         });
         expect(snapshot.kd).toBeCloseTo(1.5);
         // The rank still comes off `profile` — only the counters fall back.
@@ -394,6 +398,7 @@ describe('toSnapshot', () => {
             deaths: 0,
             wins: 0,
             losses: 0,
+            abandons: 0,
         });
         expect(snapshot.rankOrdinal).toBe(0);
         expect(snapshot.maxRankOrdinal).toBeNull();
@@ -466,5 +471,145 @@ describe('R6DataService.getRankLadder', () => {
         expect((await service.getRankLadder())[0]?.minRp).toBeNull();
         expect((await service.getRankLadder())[0]?.minRp).toBe(1000);
         expect(mock).toHaveBeenCalledTimes(2);
+    });
+});
+
+/**
+ * What a poll costs, and what a poll is charged.
+ *
+ * This is the whole reason Part B is buildable: r6data allows 3,000 requests a
+ * month across 3 tracked players, and at two requests per player per poll no
+ * cadence narrow enough to resolve single matches comes close to fitting. The
+ * two suites below pin the halves of the fix — the poller spends one request,
+ * and every request is counted.
+ */
+describe('R6DataService — request cost', () => {
+    const realFetch = global.fetch;
+    afterEach(() => {
+        global.fetch = realFetch;
+        jest.restoreAllMocks();
+    });
+
+    const ladderBody = [{ id: 22, name: 'Platinum IV', min_mmr: 3000 }];
+    const statsBody = {
+        platform_families_full_profiles: [
+            {
+                board_ids_full_profiles: [
+                    {
+                        board_id: 'ranked',
+                        full_profiles: [
+                            {
+                                season_id: 41,
+                                profile: {
+                                    rank: 22,
+                                    rank_points: 3120,
+                                    kills: 1012,
+                                    deaths: 1004,
+                                    wins: 403,
+                                    losses: 301,
+                                    abandon: 2,
+                                },
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    };
+
+    /** Answers `/api/ranks` with the ladder and anything else with the stats. */
+    function routingFetch() {
+        const mock = jest.fn(async (url: string) => ({
+            ok: true,
+            status: 200,
+            json: async () =>
+                String(url).includes('/api/ranks') ? ladderBody : statsBody,
+        }));
+        global.fetch = mock as unknown as typeof fetch;
+        return mock;
+    }
+
+    /** The `nameOnPlatform`/`type` pairs a run of requests asked for. */
+    const requestedTypes = (mock: jest.Mock): string[] =>
+        mock.mock.calls.map(
+            (call) =>
+                new URL(String(call[0])).searchParams.get('type') ?? 'ranks'
+        );
+
+    it('spends two requests resolving a player by name', async () => {
+        // The registration path: `/r6-add` does not know the Ubisoft id, so
+        // buying it is the point.
+        const mock = routingFetch();
+        const service = new R6DataService('key');
+        await service.getProfileByName('Ash', 'uplay');
+
+        expect(requestedTypes(mock).sort()).toEqual([
+            'accountInfo',
+            'ranks',
+            'stats',
+        ]);
+    });
+
+    it('spends one request polling a player already tracked', async () => {
+        // The poller's path, and the reason a 5-minute cadence fits the plan at
+        // all. `accountInfo` buys only a display-name refresh for a row that
+        // already stores the id and the name.
+        const mock = routingFetch();
+        const service = new R6DataService('key');
+        // Warm the ladder first so it is not counted against the poll; the real
+        // service memoises it once per process, not once per poll.
+        await service.getRankLadder();
+        mock.mockClear();
+
+        const profile = await service.getTrackedProfile({
+            ubisoftId: 'ubi-1',
+            gameName: 'Ash',
+            platform: 'uplay',
+        });
+
+        expect(requestedTypes(mock)).toEqual(['stats']);
+        // And it is the same snapshot: the stored id and name are threaded into
+        // the shape `accountInfo` would have returned, so there is one mapping.
+        expect(profile.ubisoftId).toBe('ubi-1');
+        expect(profile.gameName).toBe('Ash');
+        expect(profile.rank).toEqual({
+            tier: 'Platinum',
+            division: 4,
+            rp: 3120,
+        });
+        expect(profile.stats.abandons).toBe(2);
+    });
+
+    it('charges the meter once per request, before it is sent', async () => {
+        const mock = routingFetch();
+        const meter = jest.fn();
+        const service = new R6DataService('key', meter);
+
+        await service.getProfileByName('Ash', 'uplay');
+
+        expect(meter).toHaveBeenCalledTimes(mock.mock.calls.length);
+        expect(meter).toHaveBeenCalledWith(1);
+    });
+
+    it('charges a failed request too', async () => {
+        // A 429 or a 500 costs quota at the provider exactly as a 200 does. A
+        // meter that only counted successes would speed the poller up at
+        // precisely the moment the provider was pushing back.
+        global.fetch = jest.fn(async () => ({
+            ok: false,
+            status: 429,
+            text: async () => 'slow down',
+        })) as unknown as typeof fetch;
+        const meter = jest.fn();
+        const service = new R6DataService('key', meter);
+
+        await expect(
+            service.getTrackedProfile({
+                ubisoftId: 'ubi-1',
+                gameName: 'Ash',
+                platform: 'uplay',
+            })
+        ).rejects.toThrow(/429/);
+        expect(meter).toHaveBeenCalled();
     });
 });

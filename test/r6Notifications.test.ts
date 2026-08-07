@@ -1,7 +1,10 @@
 import {
+    buildR6MatchMessage,
     buildR6RankChangeMessage,
     buildR6SessionMessage,
+    notifyR6Match,
     notifyR6RankChange,
+    r6MatchResultLabel,
 } from '../packages/diana-core/src/plugins/diana-r6-bot/notifications/r6Notifications';
 import {
     buildR6PlayerEmbed,
@@ -105,6 +108,151 @@ describe('buildR6SessionMessage', () => {
             'No tracked change'
         );
     });
+
+    it('counts abandons beside the record rather than inside it', () => {
+        // A night that was 2W 1L plus a disconnect is not a 2W 2L night, and the
+        // RP arithmetic only reconciles if the abandon is visible.
+        const message = buildR6SessionMessage({
+            ...base,
+            killsGained: 9,
+            winsGained: 2,
+            lossesGained: 1,
+            abandonsGained: 1,
+        });
+        const rendered = JSON.stringify(message.fields);
+        expect(rendered).toContain('2W 1L');
+        expect(rendered).toContain('1 abandoned');
+    });
+
+    it('shows a window whose only event was an abandon', () => {
+        // Wins and losses both standing still while RP moves is exactly the case
+        // that made abandons worth capturing. Before it, this window rendered as
+        // "No tracked change" next to a real RP swing.
+        const message = buildR6SessionMessage({
+            ...base,
+            rpChange: -40,
+            killsGained: 0,
+            winsGained: 0,
+            lossesGained: 0,
+            abandonsGained: 1,
+        });
+        const rendered = JSON.stringify(message.fields);
+        expect(rendered).toContain('1 abandoned');
+        expect(rendered).not.toContain('No tracked change');
+    });
+});
+
+/**
+ * The per-match embed — Part B of Meeps' docs/r6-events-and-post-match.md.
+ *
+ * The thing worth pinning is mostly what it does *not* say. Siege has no match
+ * record, so there is no operator, map, duration or per-match score to render,
+ * and the card is deliberately sparse rather than provisionally sparse. What it
+ * must get right is the three-way outcome and never printing half a K/D.
+ */
+describe('buildR6MatchMessage', () => {
+    const base = {
+        playerName: 'Stew',
+        rpChange: 24,
+        newRankMsg: 'Gold I (2900 RP)',
+        rankIconUrl: null,
+        kills: 8,
+        deaths: 4,
+    };
+
+    it('names the three outcomes Siege actually has', () => {
+        expect(r6MatchResultLabel(true)).toBe('Victory');
+        expect(r6MatchResultLabel(false)).toBe('Defeat');
+        // Not a defeat. An abandon is counted separately by the provider and is
+        // the reason RP can move while wins and losses stand still, so folding
+        // it into `win: false` would report a loss that did not happen.
+        expect(r6MatchResultLabel(null)).toBe('Abandoned');
+    });
+
+    it('titles and colours a win, a loss and an abandon apart', () => {
+        const win = buildR6MatchMessage({ ...base, win: true });
+        const loss = buildR6MatchMessage({
+            ...base,
+            win: false,
+            rpChange: -31,
+        });
+        const abandon = buildR6MatchMessage({
+            ...base,
+            win: null,
+            rpChange: -50,
+        });
+
+        expect(win.title).toContain('Victory');
+        expect(loss.title).toContain('Defeat');
+        expect(abandon.title).toContain('Abandoned');
+        expect(win.footer).toBe('Rainbow Six Siege · Victory');
+
+        // Outcome drives the colour here, unlike the session and rank embeds
+        // where the tier does: the subject of this card is "did you win".
+        expect(win.colorHex).not.toBe(loss.colorHex);
+        expect(abandon.colorHex).not.toBe(win.colorHex);
+        expect(abandon.colorHex).not.toBe(loss.colorHex);
+    });
+
+    it('signs the RP swing and names the resulting rank', () => {
+        const rendered = JSON.stringify(
+            buildR6MatchMessage({ ...base, win: true }).fields
+        );
+        expect(rendered).toContain('+24 RP');
+        expect(rendered).toContain('Gold I (2900 RP)');
+    });
+
+    it('shows K/D only with both halves, and kills alone otherwise', () => {
+        // A player whose deaths baseline predates migration 023 has exactly one
+        // poll in that state. "8 / undefined" is not a stat; "8 kills" is.
+        const both = JSON.stringify(
+            buildR6MatchMessage({ ...base, win: true }).fields
+        );
+        expect(both).toContain('8 / 4');
+
+        const killsOnly = JSON.stringify(
+            buildR6MatchMessage({ ...base, win: true, deaths: null }).fields
+        );
+        expect(killsOnly).toContain('Kills');
+        expect(killsOnly).not.toContain('K / D');
+
+        const neither = JSON.stringify(
+            buildR6MatchMessage({
+                ...base,
+                win: true,
+                kills: null,
+                deaths: null,
+            }).fields
+        );
+        expect(neither).not.toContain('Kills');
+        expect(neither).not.toContain('K / D');
+    });
+
+    it('claims no operator, map or duration, because there is no match record', () => {
+        // Siege has no first-party developer API and the provider returns
+        // season-cumulative counters. This is the assertion that stops a future
+        // change inventing a field the data cannot support.
+        const rendered = JSON.stringify(
+            buildR6MatchMessage({ ...base, win: true })
+        ).toLowerCase();
+        for (const claim of ['operator', 'map', 'duration', 'score', 'mvp']) {
+            expect(rendered).not.toContain(claim);
+        }
+    });
+
+    it('routes through the adapter without leaking the channel into the embed', async () => {
+        const sendMessage = jest.fn().mockResolvedValue(undefined);
+        const sent = await notifyR6Match(
+            { sendMessage },
+            { ...base, win: true, discordChannelId: '42' }
+        );
+
+        expect(sent).toBe(true);
+        expect(sendMessage.mock.calls[0][0]).toEqual({ channelId: '42' });
+        expect(sendMessage.mock.calls[0][1]).not.toHaveProperty(
+            'discordChannelId'
+        );
+    });
 });
 
 describe('notifyR6RankChange', () => {
@@ -154,7 +302,13 @@ describe('r6Presentation', () => {
             rankOrdinal: 32,
             maxRankOrdinal: 32,
             rankIconUrl: null,
-            stats: { kills: 100, deaths: 100, wins: 10, losses: 10 },
+            stats: {
+                kills: 100,
+                deaths: 100,
+                wins: 10,
+                losses: 10,
+                abandons: 0,
+            },
             kd: 1.0,
             isInGame: null,
         });
