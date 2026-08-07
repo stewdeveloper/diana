@@ -1,0 +1,33 @@
+-- 024: a challenge subject is wide enough to be the person it names
+--
+-- Meeps' Settings → Connections screen could not open a Riot handshake at all:
+--
+--   POST /api/game-identity/riot -> 502
+--   [identity] Challenge error: value too long for type character varying(30)
+--
+-- 022 keyed `identity_link_challenges` on `(subject_kind, subject_id)` by
+-- *renaming* `discord_user_id`, and a rename carries the old type with it. That
+-- column was VARCHAR(30) because 019 only ever stored Discord snowflakes in it,
+-- which are 17-19 digits. A Meeps subject id is `users.public_id`, a UUID — 36
+-- characters — so every Meeps-initiated challenge overflowed the column on
+-- INSERT and surfaced to the player as "Failed to start the link". No Discord
+-- `/link start` was affected, which is why this survived 022's tests: the DB is
+-- mocked there, and the only unmocked path was already inside 30 characters.
+--
+-- WHY 200 AND NOT 64
+--
+-- 015 and 016 store a Meeps user id as VARCHAR(64), so 64 would fit and would
+-- match that precedent. 200 is `identity_accounts.external_id`, and that is the
+-- column this value actually ends up in: on a successful confirm the subject
+-- becomes an attachment, `linkAccount(subject.kind, subject.id, ...)`. Matching
+-- the destination makes the useful property true by construction — a subject
+-- that can start a challenge can always finish one — where 64 would only make
+-- it true for the id formats we happen to have today.
+--
+-- migrate.sh runs psql without ON_ERROR_STOP and records the file as applied
+-- either way, so every statement here must be idempotent. ALTER COLUMN TYPE to
+-- a wider VARCHAR is: re-running it is a no-op that still succeeds, and Postgres
+-- rebuilds the primary-key index for us.
+
+ALTER TABLE "identity_link_challenges"
+    ALTER COLUMN "subject_id" TYPE VARCHAR(200);
