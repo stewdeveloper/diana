@@ -202,6 +202,19 @@ describe('r6RankService', () => {
             },
         ];
 
+        it('names the next rung the way every other rank is named', () => {
+            // The live ladder labels rungs "Platinum 1"; `formatR6Rank` renders
+            // "Platinum II". Both land in the same embed and the same Meeps
+            // card, so the next rank is re-rendered rather than passed through.
+            const live = parseLadder(liveRanksV7)!;
+            const platinum2 = rungForRp(live, 3300)!;
+            expect(platinum2.label).toBe('Platinum 2');
+            expect(getR6RpToNextRank(live, platinum2.ordinal, 3300)).toEqual({
+                rpNeeded: 100,
+                nextRankName: 'Platinum I',
+            });
+        });
+
         it('counts up to the next rung', () => {
             expect(getR6RpToNextRank(withThresholds, 1, 40)).toEqual({
                 rpNeeded: 60,

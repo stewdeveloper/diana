@@ -137,12 +137,23 @@ export function getR6RpToNextRank(
 
     return {
         rpNeeded: Math.max(0, next.minRp - rp),
-        nextRankName: next.label,
+        // Re-rendered from tier and division rather than passed through as
+        // `next.label`, which is the provider's spelling — "Platinum 1" on the
+        // live ladder. Every other rank string a consumer sees comes from
+        // `formatR6Rank` and is Roman, and these two appear in the same Discord
+        // embed and the same Meeps card: "Now Platinum II" directly above
+        // "100 RP to Platinum 1". This path only started returning anything
+        // once the live ladder parsed, so the mismatch has never shipped.
+        nextRankName: formatR6RankName(next.tier, next.division),
     };
+}
+
+/** Rank without RP: "Platinum II", or just the tier when it has no division. */
+export function formatR6RankName(tier: string, div: number): string {
+    return div === 0 ? tier : `${tier} ${romanNumeral(div)}`;
 }
 
 /** Format rank for display: "Platinum II (3200 RP)". */
 export function formatR6Rank(tier: string, div: number, rp: number): string {
-    if (div === 0) return `${tier} (${rp} RP)`;
-    return `${tier} ${romanNumeral(div)} (${rp} RP)`;
+    return `${formatR6RankName(tier, div)} (${rp} RP)`;
 }
