@@ -169,7 +169,7 @@ export const R6_GAME_ID = 'rainbow_six_siege';
 export const R6_PLATFORMS = ['uplay', 'psn', 'xbl'] as const;
 export type R6Platform = (typeof R6_PLATFORMS)[number];
 
-/** Ranked tier order, lowest to highest. */
+/** Ranked tier order, lowest to highest. Each has `R6_DIVISIONS_PER_TIER`. */
 export const R6_TIER_ORDER = [
     'Copper',
     'Bronze',
@@ -179,6 +179,20 @@ export const R6_TIER_ORDER = [
     'Emerald',
     'Diamond',
     'Champion',
+] as const;
+
+/**
+ * Tier order for *comparison*, which is `R6_TIER_ORDER` plus the top rung.
+ *
+ * The live v7 ladder ends with a 42nd row, "Legend Division" (5,000+ MMR),
+ * above Champion 1 and with no divisions of its own. It is deliberately not in
+ * `R6_TIER_ORDER`, which generates the fallback ladder five divisions to a
+ * tier and would invent a "Legend Division 5" that does not exist. But it does
+ * have to rank above Champion, or reaching it reads as a demotion.
+ */
+export const R6_COMPARABLE_TIER_ORDER = [
+    ...R6_TIER_ORDER,
+    'Legend Division',
 ] as const;
 
 /**

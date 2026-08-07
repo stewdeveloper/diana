@@ -5,10 +5,40 @@ import {
     formatR6Rank,
     fallbackRankLadder,
     rungForOrdinal,
+    rungForRp,
 } from '../packages/diana-core/src/plugins/diana-r6-bot/api/utils/rankService';
+import { parseLadder } from '../packages/diana-core/src/plugins/diana-r6-bot/api/utils/r6DataService';
+import liveRanksV7 from './fixtures/r6-ranks-v7.json';
 
 describe('r6RankService', () => {
     describe('determineR6RankMovement', () => {
+        it('reads Legend Division as above Champion', () => {
+            // The 42nd rung on the live ladder. It is deliberately not in
+            // R6_TIER_ORDER (which generates the fallback five divisions to a
+            // tier and would invent a "Legend Division 5"), so it needs the
+            // comparison order to place it, or reaching it reads as a demotion.
+            expect(
+                determineR6RankMovement(
+                    'Champion',
+                    1,
+                    4900,
+                    'Legend Division',
+                    0,
+                    5000
+                )
+            ).toBe('promoted');
+            expect(
+                determineR6RankMovement(
+                    'Legend Division',
+                    0,
+                    5000,
+                    'Champion',
+                    1,
+                    4950
+                )
+            ).toBe('demoted');
+        });
+
         it('returns promoted when tier increases', () => {
             expect(
                 determineR6RankMovement('Gold', 2, 2800, 'Platinum', 5, 3000)
@@ -126,6 +156,32 @@ describe('r6RankService', () => {
         });
     });
 
+    describe('rungForRp', () => {
+        const live = parseLadder(liveRanksV7)!;
+
+        it('resolves a player by RP band, not by a derived ordinal', () => {
+            // The live ladder publishes no ordinals, so matching a provider
+            // `rank` against one this process invented is a coincidence. The
+            // band is stated by the provider: Platinum 2 starts at 3,300.
+            expect(rungForRp(live, 3300)?.label).toBe('Platinum 2');
+            expect(rungForRp(live, 3399)?.label).toBe('Platinum 2');
+            expect(rungForRp(live, 3400)?.label).toBe('Platinum 1');
+            expect(rungForRp(live, 0)?.label).toBe('Unranked');
+        });
+
+        it('has no upper bound to get wrong at the top', () => {
+            expect(rungForRp(live, 5000)?.label).toBe('Legend Division');
+            expect(rungForRp(live, 999_999)?.label).toBe('Legend Division');
+        });
+
+        it('is null on a ladder with no thresholds, so the ordinal is used', () => {
+            // Which is exactly the static fallback — this null is what sends
+            // `toSnapshot` back to `rungForOrdinal`.
+            expect(rungForRp(fallbackRankLadder(), 3300)).toBeNull();
+            expect(rungForRp(live, NaN)).toBeNull();
+        });
+    });
+
     describe('getR6RpToNextRank', () => {
         const withThresholds = [
             {
@@ -145,6 +201,19 @@ describe('r6RankService', () => {
                 iconUrl: null,
             },
         ];
+
+        it('names the next rung the way every other rank is named', () => {
+            // The live ladder labels rungs "Platinum 1"; `formatR6Rank` renders
+            // "Platinum II". Both land in the same embed and the same Meeps
+            // card, so the next rank is re-rendered rather than passed through.
+            const live = parseLadder(liveRanksV7)!;
+            const platinum2 = rungForRp(live, 3300)!;
+            expect(platinum2.label).toBe('Platinum 2');
+            expect(getR6RpToNextRank(live, platinum2.ordinal, 3300)).toEqual({
+                rpNeeded: 100,
+                nextRankName: 'Platinum I',
+            });
+        });
 
         it('counts up to the next rung', () => {
             expect(getR6RpToNextRank(withThresholds, 1, 40)).toEqual({

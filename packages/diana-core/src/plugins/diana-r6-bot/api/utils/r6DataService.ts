@@ -4,7 +4,11 @@ import type {
     R6RankRung,
     R6StatSnapshot,
 } from '../../types.js';
-import { fallbackRankLadder, rungForOrdinal } from './rankService.js';
+import {
+    fallbackRankLadder,
+    rungForOrdinal,
+    rungForRp,
+} from './rankService.js';
 
 const BASE_URL = 'https://api.r6data.com';
 
@@ -84,18 +88,33 @@ interface StatsResponse {
     }>;
 }
 
-/** One entry from `/api/ranks`, whose exact spelling the docs do not pin down. */
+/**
+ * One entry from `/api/ranks`.
+ *
+ * The vendor publishes no response schema for this endpoint, so this was
+ * written blind and got it wrong. The live v7 payload — captured verbatim in
+ * `test/fixtures/r6-ranks-v7.json` — is a bare array of 42 rows carrying
+ * exactly three keys:
+ *
+ *     {"name": "Copper 5", "min_mmr": 1000, "max_mmr": 1099}
+ *
+ * No id, no ordinal, no icon, and divisions in Arabic rather than Roman
+ * numerals. The fields beyond those three are kept as tolerated alternatives
+ * because the endpoint is versioned and undocumented — `version=v8` is a thing
+ * that will happen — but `name`/`min_mmr` are the ones that arrive today, and
+ * the fixture is what the tests assert against.
+ */
 interface RanksResponseEntry {
-    id?: number;
-    rank?: number;
-    rank_id?: number;
-    name?: string;
-    rank_name?: string;
-    min_mmr?: number;
-    max_mmr?: number;
-    image?: string;
-    imageUrl?: string;
-    icon?: string;
+    id?: unknown;
+    rank?: unknown;
+    rank_id?: unknown;
+    name?: unknown;
+    rank_name?: unknown;
+    min_mmr?: unknown;
+    max_mmr?: unknown;
+    image?: unknown;
+    imageUrl?: unknown;
+    icon?: unknown;
 }
 
 function num(value: unknown): number {
@@ -125,11 +144,20 @@ const ROMAN_DIVISIONS: Record<string, number> = {
 };
 
 /**
- * Split a ladder label like "Platinum II" or "Champion" into tier + division.
+ * Split a ladder label like "Platinum 2", "Platinum II" or "Champion" into
+ * tier + division.
  *
- * Roman numerals only go to V here, which is the whole ladder — a label this
- * does not recognise keeps its full text as the tier and division 0, so an
- * unfamiliar rung still renders rather than disappearing.
+ * Both numeral systems, because the two places a label comes from disagree:
+ * `/api/ranks` spells them "Copper 5", the rank metadata under
+ * `type=seasonalStats` spells them "PLATINUM II", and `fallbackRankLadder`
+ * generates Roman. Reading only Roman is what made every live rung parse as
+ * tier "Copper 5" with division 0 — which reads acceptably in an embed but
+ * leaves `determineR6RankMovement` unable to find the tier in `R6_TIER_ORDER`,
+ * so no promotion or demotion was ever reported.
+ *
+ * Divisions only go to 5, which is the whole ladder — a label this does not
+ * recognise keeps its full text as the tier and division 0, so an unfamiliar
+ * rung ("Legend Division", "Unranked") still renders rather than disappearing.
  *
  * Tokenised rather than matched against `/^(.*?)\s+(V|IV|I{1,3})$/i`, which
  * CodeQL flagged as `js/polynomial-redos` (high): `.*?` and `\s+` can both
@@ -150,10 +178,19 @@ export function parseRankLabel(label: string | null | undefined): {
     if (parts.length < 2) return { tier: raw, division: 0 };
 
     const last = parts[parts.length - 1] ?? '';
-    const division = ROMAN_DIVISIONS[last.toLowerCase()];
-    if (division === undefined) return { tier: raw, division: 0 };
+    const division = divisionFor(last);
+    if (division === null) return { tier: raw, division: 0 };
 
     return { tier: parts.slice(0, -1).join(' '), division };
+}
+
+/** A trailing division token, Roman or Arabic, or null if it is neither. */
+function divisionFor(token: string): number | null {
+    const roman = ROMAN_DIVISIONS[token.toLowerCase()];
+    if (roman !== undefined) return roman;
+    // Anchored and bounded to a single digit 1-5: "Copper 12" is not a rung,
+    // and neither is the "5000" in a label that happens to end in a number.
+    return /^[1-5]$/.test(token) ? Number(token) : null;
 }
 
 /**
@@ -164,32 +201,133 @@ export function parseRankLabel(label: string | null | undefined): {
  * "Unranked" and not take the whole poll down.
  */
 export function parseLadder(body: unknown): R6RankRung[] | null {
-    const rows: RanksResponseEntry[] = Array.isArray(body)
-        ? body
-        : Array.isArray((body as { data?: unknown })?.data)
-          ? (body as { data: RanksResponseEntry[] }).data
-          : Array.isArray((body as { ranks?: unknown })?.ranks)
-            ? (body as { ranks: RanksResponseEntry[] }).ranks
-            : [];
+    const parsed = ladderRows(body)
+        .map((row) => {
+            const label = firstString(row?.name, row?.rank_name);
+            if (label === null) return null;
+            return {
+                ordinal: firstNumeric(row?.id, row?.rank, row?.rank_id),
+                label,
+                minRp: firstNumeric(row?.min_mmr),
+                iconUrl: firstString(row?.image, row?.imageUrl, row?.icon),
+            };
+        })
+        .filter((row) => row !== null);
 
-    const rungs: R6RankRung[] = [];
-    for (const row of rows) {
-        const label = row?.name ?? row?.rank_name;
-        const ordinal = row?.id ?? row?.rank ?? row?.rank_id;
-        if (typeof label !== 'string' || typeof ordinal !== 'number') continue;
-        const { tier, division } = parseRankLabel(label);
-        rungs.push({
-            ordinal,
+    // Whether the payload numbers its rungs *at all* decides what a row without
+    // a number means. The live v7 ladder numbers none of them — which is the
+    // bug: requiring an ordinal per row rejected all 42 rows and fell through
+    // to the static ladder on every poll. But if some row does carry one, a row
+    // that does not is a broken row, and inventing a number for it would
+    // collide with the real ones.
+    const numbered = parsed.some((row) => row.ordinal !== null);
+    const usable = numbered
+        ? parsed.filter((row) => row.ordinal !== null)
+        : // Lowest threshold first. Sorted rather than trusted in payload
+          // order because a derived ordinal has to mean *something*, and
+          // "climbs with RP" is the only ordering the payload justifies.
+          // Left alone when there are no thresholds to sort on.
+          parsed.every((row) => row.minRp !== null)
+          ? [...parsed].sort((a, b) => a.minRp! - b.minRp!)
+          : parsed;
+
+    if (usable.length === 0) return null;
+
+    // The live ladder's bottom row is "Unranked" (0-999 MMR), which is not a
+    // rung anyone holds — numbering from it would shift the ladder by one and
+    // read every player a rung low. Unranked takes ordinal 0, which is what
+    // `rungForOrdinal` already treats as "no rank", so Copper 5 takes 1, the
+    // same numbering `fallbackRankLadder` generates.
+    const offset = parseRankLabel(usable[0]!.label).tier === 'Unranked' ? 1 : 0;
+
+    const rungs = usable.map((row, index) => {
+        const { tier, division } = parseRankLabel(row.label);
+        return {
+            ordinal: row.ordinal ?? index + 1 - offset,
             tier,
             division,
-            label,
-            minRp: typeof row.min_mmr === 'number' ? row.min_mmr : null,
-            iconUrl: row.image ?? row.imageUrl ?? row.icon ?? null,
-        });
-    }
+            label: row.label,
+            minRp: row.minRp,
+            iconUrl: row.iconUrl,
+        };
+    });
 
-    if (rungs.length === 0) return null;
     return rungs.sort((a, b) => a.ordinal - b.ordinal);
+}
+
+/**
+ * The rank rows, unwrapped if the payload wraps them.
+ *
+ * v7 is a bare array. `{data}` and `{ranks}` are kept because the endpoint is
+ * versioned and its response schema is published nowhere, so today's shape is
+ * not promised to hold — and two extra spellings are cheaper than another
+ * round of this.
+ */
+function ladderRows(body: unknown): RanksResponseEntry[] {
+    const wrapper = body as { data?: unknown; ranks?: unknown } | null;
+    for (const candidate of [body, wrapper?.data, wrapper?.ranks]) {
+        if (Array.isArray(candidate)) return candidate as RanksResponseEntry[];
+    }
+    return [];
+}
+
+/** First of `values` that is a non-empty string, else null. */
+function firstString(...values: unknown[]): string | null {
+    for (const value of values) {
+        if (typeof value === 'string' && value.trim() !== '')
+            return value.trim();
+    }
+    return null;
+}
+
+/**
+ * First of `values` that is a number, else null.
+ *
+ * Unlike `firstNum`, absent stays absent — a null ordinal is what tells
+ * `parseLadder` the payload is unnumbered, and a null threshold is what stops
+ * `getR6RpToNextRank` inventing a target of 0 RP.
+ */
+function firstNumeric(...values: unknown[]): number | null {
+    for (const value of values) {
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+    }
+    return null;
+}
+
+/**
+ * A one-line sketch of a payload: its container, and the keys of its first row.
+ *
+ * The point of the warning this feeds is to make the *next* unrecognised shape
+ * diagnosable without an API key, which the old message — which said only that
+ * something was wrong — could not do. Keys only, never values: the keys are
+ * what `parseLadder` matches on, and a payload is not something to spill whole
+ * into a log line. Both lists are capped so a hostile or enormous response
+ * cannot flood the log.
+ */
+export function describeShape(body: unknown): string {
+    if (body === null || body === undefined) return String(body);
+    if (Array.isArray(body)) {
+        return `array(${body.length}) of ${describeRow(body[0])}`;
+    }
+    if (typeof body !== 'object') return typeof body;
+
+    const keys = Object.keys(body);
+    const first = Object.values(body)[0];
+    return `object{${capped(keys)}} first value ${describeRow(first)}`;
+}
+
+function describeRow(row: unknown): string {
+    if (row === null || row === undefined) return String(row);
+    if (Array.isArray(row)) return `array(${row.length})`;
+    if (typeof row !== 'object') return typeof row;
+    return `{${capped(Object.keys(row))}}`;
+}
+
+function capped(keys: string[], limit = 12): string {
+    const shown = keys.slice(0, limit).map((key) => key.slice(0, 40));
+    return keys.length > limit
+        ? `${shown.join(',')},…+${keys.length - limit}`
+        : shown.join(',');
 }
 
 /**
@@ -246,7 +384,14 @@ export function toSnapshot(
     const entry = selectRankedEntry(stats);
     const profile = entry?.profile;
     const ordinal = num(profile?.rank);
-    const rung = rungForOrdinal(ladder, ordinal);
+    const rp = num(profile?.rank_points);
+
+    // RP first, ordinal second. The live ladder publishes no ordinals, so the
+    // ones on a parsed ladder are derived here and need not agree with the
+    // provider's `rank` — but its RP bands are stated outright, and RP is the
+    // same number in both payloads. The ordinal path still runs for the static
+    // fallback ladder, which carries no bands.
+    const rung = rungForRp(ladder, rp) ?? rungForOrdinal(ladder, ordinal);
 
     // Counters come from `profile` when it has them and `season_statistics`
     // when it does not. r6data documents both shapes and does not say which a
@@ -274,9 +419,14 @@ export function toSnapshot(
         rank: {
             tier: rung?.tier ?? 'Unranked',
             division: rung?.division ?? 0,
-            rp: num(profile?.rank_points),
+            rp,
         },
-        rankOrdinal: ordinal,
+        // The resolved rung's ordinal, not the provider's. Its only consumer is
+        // `getR6RpToNextRank`, which looks the number back up in this same
+        // ladder — so it has to be this ladder's numbering, or it finds the
+        // wrong rung's threshold. Falls back to the provider's when nothing
+        // resolved, which is the unranked case and reads 0 either way.
+        rankOrdinal: rung?.ordinal ?? ordinal,
         maxRankOrdinal:
             typeof profile?.max_rank === 'number' ? profile.max_rank : null,
         rankIconUrl: rung?.iconUrl ?? null,
@@ -355,7 +505,7 @@ export class R6DataService implements IR6Service {
                 const parsed = parseLadder(body);
                 if (!parsed) {
                     console.warn(
-                        '[R6] /api/ranks returned an unrecognised shape; using the static ladder.'
+                        `[R6] /api/ranks (version=${RANKS_VERSION}) returned an unrecognised shape; using the static ladder. Saw: ${describeShape(body)}`
                     );
                     // Cleared for the same reason the network path clears it:
                     // the fallback carries no RP thresholds, so memoising it

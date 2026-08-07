@@ -1,5 +1,6 @@
 import {
     R6_TIER_ORDER,
+    R6_COMPARABLE_TIER_ORDER,
     R6_DIVISIONS_PER_TIER,
     type R6RankRung,
 } from '../../types.js';
@@ -48,9 +49,38 @@ export function rungForOrdinal(
     return ladder.find((r) => r.ordinal === ordinal) ?? null;
 }
 
+/**
+ * The rung whose RP band contains `rp`, or null if the ladder has no bands.
+ *
+ * This is the reliable half of the pair, and where it applies it is preferred.
+ * The live `/api/ranks` ladder publishes no ordinals at all — only names and
+ * `min_mmr` — so the ordinals on a parsed ladder are derived, and matching a
+ * provider `rank` against a number this process invented is a coincidence
+ * waiting to break. The RP band is stated by the provider and needs no
+ * agreement about numbering: 3,300 RP is Platinum 2 because the ladder says
+ * Platinum 2 starts at 3,300.
+ *
+ * The highest band at or below `rp` wins, so the top rung ("Legend Division",
+ * 5,000+) has no upper bound to get wrong. Null when nothing qualifies, which
+ * is what sends `toSnapshot` back to the ordinal — the static fallback ladder
+ * carries no thresholds by design.
+ */
+export function rungForRp(ladder: R6RankRung[], rp: number): R6RankRung | null {
+    if (!Number.isFinite(rp)) return null;
+
+    let best: R6RankRung | null = null;
+    for (const rung of ladder) {
+        if (rung.minRp === null || rp < rung.minRp) continue;
+        if (best === null || rung.minRp > best.minRp!) best = rung;
+    }
+    return best;
+}
+
 const getTierIndex = (tier: string): number => {
     const normalized = tier.trim().toLowerCase();
-    return R6_TIER_ORDER.findIndex((t) => t.toLowerCase() === normalized);
+    return R6_COMPARABLE_TIER_ORDER.findIndex(
+        (t) => t.toLowerCase() === normalized
+    );
 };
 
 /**
@@ -107,12 +137,23 @@ export function getR6RpToNextRank(
 
     return {
         rpNeeded: Math.max(0, next.minRp - rp),
-        nextRankName: next.label,
+        // Re-rendered from tier and division rather than passed through as
+        // `next.label`, which is the provider's spelling — "Platinum 1" on the
+        // live ladder. Every other rank string a consumer sees comes from
+        // `formatR6Rank` and is Roman, and these two appear in the same Discord
+        // embed and the same Meeps card: "Now Platinum II" directly above
+        // "100 RP to Platinum 1". This path only started returning anything
+        // once the live ladder parsed, so the mismatch has never shipped.
+        nextRankName: formatR6RankName(next.tier, next.division),
     };
+}
+
+/** Rank without RP: "Platinum II", or just the tier when it has no division. */
+export function formatR6RankName(tier: string, div: number): string {
+    return div === 0 ? tier : `${tier} ${romanNumeral(div)}`;
 }
 
 /** Format rank for display: "Platinum II (3200 RP)". */
 export function formatR6Rank(tier: string, div: number, rp: number): string {
-    if (div === 0) return `${tier} (${rp} RP)`;
-    return `${tier} ${romanNumeral(div)} (${rp} RP)`;
+    return `${formatR6RankName(tier, div)} (${rp} RP)`;
 }

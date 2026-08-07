@@ -1,21 +1,26 @@
 import {
     parseRankLabel,
     parseLadder,
+    describeShape,
     selectRankedProfile,
     selectRankedEntry,
     toSnapshot,
     R6DataService,
 } from '../packages/diana-core/src/plugins/diana-r6-bot/api/utils/r6DataService';
 import { fallbackRankLadder } from '../packages/diana-core/src/plugins/diana-r6-bot/api/utils/rankService';
+import liveRanksV7 from './fixtures/r6-ranks-v7.json';
 
 /**
  * The r6data mapping is the one piece of the client with real logic in it, and
  * the piece that cannot be exercised without an API key — so it is tested
- * against the response shapes r6data documents.
+ * against the response shapes r6data documents, plus one it does not.
  *
- * Two of those shapes are only partly documented: the `/api/ranks` payload,
- * and what the numeric `rank` on a stats profile indexes into. Both are read
- * defensively, and these cases pin that defensiveness rather than a guess.
+ * `/api/ranks` has no published response schema, and this file used to pin a
+ * guess at it. It now pins the real thing: `fixtures/r6-ranks-v7.json` is a
+ * verbatim capture of the live response, and the suite below it asserts
+ * against that rather than against what the shape ought to be. What the
+ * numeric `rank` on a stats profile indexes into is still unknown — which is
+ * why nothing depends on it any more; ranks resolve by RP band instead.
  */
 describe('parseRankLabel', () => {
     it('splits a tier and its Roman division, including V and IV', () => {
@@ -31,6 +36,28 @@ describe('parseRankLabel', () => {
             tier: 'Champion',
             division: 1,
         });
+    });
+
+    it('splits Arabic divisions, which is what /api/ranks returns', () => {
+        // The live ladder spells them "Copper 5", not "Copper V". Read as
+        // Roman only, the tier came out as the whole label with division 0,
+        // and `determineR6RankMovement` could not match it to a tier.
+        expect(parseRankLabel('Copper 5')).toEqual({
+            tier: 'Copper',
+            division: 5,
+        });
+        expect(parseRankLabel('Platinum 2')).toEqual({
+            tier: 'Platinum',
+            division: 2,
+        });
+    });
+
+    it('does not mistake an out-of-range number for a division', () => {
+        // Divisions stop at 5; a trailing number outside 1-5 is part of a name
+        // this parser does not know, and keeping it whole is the safe read.
+        for (const label of ['Copper 6', 'Copper 0', 'Copper 12']) {
+            expect(parseRankLabel(label)).toEqual({ tier: label, division: 0 });
+        }
     });
 
     it('keeps an undivided label whole rather than dropping it', () => {
@@ -90,10 +117,36 @@ describe('parseLadder', () => {
     });
 
     it('unwraps the common envelope spellings', () => {
-        // The docs do not say whether the payload is bare, {data}, or {ranks},
-        // so all three are accepted rather than guessed at.
+        // v7 is a bare array; {data} and {ranks} are kept because the endpoint
+        // is versioned and publishes no schema, so this shape is not promised.
         expect(parseLadder({ data: rows })).toHaveLength(2);
         expect(parseLadder({ ranks: rows })).toHaveLength(2);
+    });
+
+    it('numbers an unnumbered ladder by RP, lowest rung first', () => {
+        // The live payload carries no ordinal on any row, so they are derived.
+        // Sorted by threshold rather than trusted in payload order, because a
+        // derived ordinal has to mean something and "climbs with RP" is the
+        // only ordering the payload justifies.
+        const ladder = parseLadder([
+            { name: 'Copper 4', min_mmr: 1100 },
+            { name: 'Copper 5', min_mmr: 1000 },
+        ])!;
+        expect(ladder.map((r) => [r.ordinal, r.label])).toEqual([
+            [1, 'Copper 5'],
+            [2, 'Copper 4'],
+        ]);
+    });
+
+    it('leaves an unnumbered, thresholdless ladder in payload order', () => {
+        const ladder = parseLadder([
+            { name: 'Copper V' },
+            { name: 'Copper IV' },
+        ])!;
+        expect(ladder.map((r) => [r.ordinal, r.label])).toEqual([
+            [1, 'Copper V'],
+            [2, 'Copper IV'],
+        ]);
     });
 
     it('tolerates alternative field spellings', () => {
@@ -108,7 +161,10 @@ describe('parseLadder', () => {
         expect(ladder[0]!.iconUrl).toBe('https://x/3.png');
     });
 
-    it('skips rows missing a name or an ordinal', () => {
+    it('skips a broken row in an otherwise numbered ladder', () => {
+        // Once *some* row carries an ordinal, one that does not is a broken row
+        // rather than an unnumbered payload, and guessing a number for it would
+        // collide with the real ones.
         const ladder = parseLadder([
             { id: 1, name: 'Copper V' },
             { id: 2 },
@@ -123,6 +179,108 @@ describe('parseLadder', () => {
         for (const body of [null, undefined, {}, [], { data: 'nope' }]) {
             expect(parseLadder(body)).toBeNull();
         }
+    });
+});
+
+/**
+ * The live `/api/ranks?version=v7` response, captured verbatim.
+ *
+ * This is the payload the shipped code was guessing at, and every guess in the
+ * original was wrong in a way that mattered: it has no `id` on any row (so the
+ * old parser rejected all 42 and warned on every poll), no icon field at all,
+ * an "Unranked" row below Copper 5, Arabic division numerals, and a 42nd rung
+ * above Champion. The fixture is checked in so none of that has to be guessed
+ * at again — see `test/fixtures/r6-ranks-v7.json`.
+ */
+describe('parseLadder — the live v7 payload', () => {
+    const live = parseLadder(liveRanksV7)!;
+
+    it('parses, where the shipped parser returned null', () => {
+        // The bug, stated directly. Every row lacks `id`/`rank`/`rank_id`, and
+        // the old parser required one per row, so `parseLadder` returned null,
+        // `getRankLadder` logged "unrecognised shape" and served the static
+        // ladder — which has no RP thresholds, so `getR6RpToNextRank` returned
+        // null for the life of the process.
+        expect(liveRanksV7.every((row) => !('id' in row))).toBe(true);
+        expect(live).not.toBeNull();
+        expect(live).toHaveLength(42);
+    });
+
+    it('reads Arabic division numerals as divisions', () => {
+        // "Copper 5", not "Copper V". Read as Roman only, every live rung
+        // parsed as tier "Copper 5" with division 0 — which renders acceptably
+        // but leaves `determineR6RankMovement` unable to find the tier, so no
+        // promotion or demotion was ever reported.
+        const platinum2 = live.find((r) => r.label === 'Platinum 2')!;
+        expect(platinum2.tier).toBe('Platinum');
+        expect(platinum2.division).toBe(2);
+        expect(platinum2.minRp).toBe(3300);
+    });
+
+    it('numbers Unranked 0, so the live and static ladders agree', () => {
+        // The payload's bottom row is "Unranked" (0-999). Numbering from it
+        // would shift the ladder by one and read every player a rung low.
+        expect(live[0]).toMatchObject({ ordinal: 0, tier: 'Unranked' });
+
+        // With that offset the two ladders line up rung for rung across all
+        // forty ranked rungs — Copper 5 is 1 in both, Champion 1 is 40 in
+        // both. That is the property that makes swapping to the static ladder
+        // mid-run harmless, and the one an off-by-one would silently break.
+        const fallback = fallbackRankLadder();
+        expect(fallback).toHaveLength(40);
+        expect(fallback.map((r) => [r.ordinal, r.tier, r.division])).toEqual(
+            live
+                .filter((r) => r.ordinal >= 1 && r.ordinal <= 40)
+                .map((r) => [r.ordinal, r.tier, r.division])
+        );
+    });
+
+    it('keeps the top rung whole rather than mangling it', () => {
+        // "Legend Division" is the 42nd row, 5,000+, and has no division of
+        // its own — it must survive as a label, not become "Legend" div 0.
+        expect(live[live.length - 1]).toMatchObject({
+            label: 'Legend Division',
+            tier: 'Legend Division',
+            division: 0,
+            minRp: 5000,
+        });
+    });
+
+    it('carries no icons, because the payload has none', () => {
+        // Worth pinning: `rankIconUrl` is null for every live rank, so an embed
+        // that assumes a rank image gets nothing. Not a bug to fix here, but
+        // not something to discover in production either.
+        expect(live.every((r) => r.iconUrl === null)).toBe(true);
+    });
+});
+
+describe('describeShape', () => {
+    /**
+     * The half of the fix that survives being wrong about the payload: if some
+     * future ladder is still unparseable, the log line has to say what arrived,
+     * because nobody debugging it has an API key to go and look.
+     */
+    it('names the container and the first row’s keys', () => {
+        expect(describeShape([{ rank: 'PLATINUM II', imageUrl: 'x' }])).toBe(
+            'array(1) of {rank,imageUrl}'
+        );
+        expect(describeShape({ data: [{ id: 1 }] })).toBe(
+            'object{data} first value array(1)'
+        );
+        expect(describeShape(null)).toBe('null');
+        expect(describeShape('nope')).toBe('string');
+    });
+
+    it('caps a hostile payload instead of flooding the log', () => {
+        const wide = Object.fromEntries(
+            Array.from({ length: 30 }, (_, i) => [`k${i}`, i])
+        );
+        const described = describeShape([wide]);
+        expect(described).toContain('…+18');
+        expect(described.length).toBeLessThan(200);
+        expect(describeShape([{ ['x'.repeat(500)]: 1 }]).length).toBeLessThan(
+            200
+        );
     });
 });
 
@@ -251,6 +409,56 @@ describe('toSnapshot', () => {
         expect(snapshot.maxRankOrdinal).toBe(24);
         expect(snapshot.ubisoftId).toBe('abc-123');
         expect(snapshot.gameName).toBe('Fishy.EU');
+    });
+
+    it('resolves against the live ladder by RP, not by ordinal', () => {
+        // The live ladder publishes no ordinals, so the ones on it are derived
+        // here and need not match the provider's `rank`. Its RP bands are
+        // stated outright, and RP is the same number in both payloads — so a
+        // player on 3,200 RP is Platinum 3 (3,200-3,299) regardless of what
+        // `profile.rank` happens to be numbered.
+        const snapshot = toSnapshot(
+            account,
+            stats,
+            parseLadder(liveRanksV7)!,
+            'Fishy.EU',
+            'uplay'
+        );
+        expect(snapshot.rank).toEqual({
+            tier: 'Platinum',
+            division: 3,
+            rp: 3200,
+        });
+    });
+
+    it('reads an unranked player as Unranked, not as the bottom rung', () => {
+        const unranked = {
+            platform_families_full_profiles: [
+                {
+                    board_ids_full_profiles: [
+                        {
+                            board_id: 'ranked',
+                            full_profiles: [
+                                {
+                                    season_id: 41,
+                                    profile: { rank: 0, rank_points: 0 },
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        } as never;
+        const snapshot = toSnapshot(
+            account,
+            unranked,
+            parseLadder(liveRanksV7)!,
+            'x',
+            'uplay'
+        );
+        expect(snapshot.rank.tier).toBe('Unranked');
+        expect(snapshot.rank.division).toBe(0);
+        expect(snapshot.rankOrdinal).toBe(0);
     });
 
     it('derives K/D from the raw counters r6data reports', () => {
@@ -471,6 +679,22 @@ describe('R6DataService.getRankLadder', () => {
         expect((await service.getRankLadder())[0]?.minRp).toBeNull();
         expect((await service.getRankLadder())[0]?.minRp).toBe(1000);
         expect(mock).toHaveBeenCalledTimes(2);
+    });
+
+    it('says which version it asked for and what came back', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        respondOnce([{ nothing: 'useful' }]);
+
+        await new R6DataService('key').getRankLadder();
+
+        expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining('object{nothing}')
+        );
+        expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining(
+                `version=${process.env.R6DATA_RANKS_VERSION ?? 'v7'}`
+            )
+        );
     });
 });
 
