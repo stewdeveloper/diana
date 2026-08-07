@@ -1,6 +1,7 @@
 import {
     parseRankLabel,
     parseLadder,
+    describeShape,
     selectRankedProfile,
     selectRankedEntry,
     toSnapshot,
@@ -94,6 +95,72 @@ describe('parseLadder', () => {
         // so all three are accepted rather than guessed at.
         expect(parseLadder({ data: rows })).toHaveLength(2);
         expect(parseLadder({ ranks: rows })).toHaveLength(2);
+        expect(parseLadder({ results: rows })).toHaveLength(2);
+        expect(parseLadder({ data: { ranks: rows } })).toHaveLength(2);
+    });
+
+    it('reads a map of rows keyed by ordinal or rank name', () => {
+        const ladder = parseLadder({ '1': rows[1], '2': rows[0] })!;
+        expect(ladder.map((r) => r.label)).toEqual(['Copper V', 'Copper IV']);
+    });
+
+    it('reads the label-shaped `rank` the vendor actually returns', () => {
+        // The live warning this fixes. r6data documents no response schema for
+        // /api/ranks, but the rank metadata it *does* document spells the label
+        // `rank` ("PLATINUM II") and the icon `imageUrl` — a shape with no
+        // `name` and no numeric id, which the previous parser rejected wholesale
+        // and then fell through to the static ladder on every poll.
+        const ladder = parseLadder([
+            {
+                rank: 'PLATINUM II',
+                min_mmr: 3300,
+                imageUrl: 'https://r6data.com/platinum-2.webp',
+            },
+        ])!;
+        expect(ladder[0]).toEqual({
+            ordinal: 1,
+            tier: 'Platinum',
+            division: 2,
+            label: 'Platinum II',
+            minRp: 3300,
+            iconUrl: 'https://r6data.com/platinum-2.webp',
+        });
+    });
+
+    it('numbers an unnumbered ladder by RP, lowest rung first', () => {
+        // Ordinals are derived only when *no* row has one, and in the order
+        // `fallbackRankLadder` numbers in, so `rungForOrdinal` resolves a
+        // provider `rank` to the same rung either way — but now with the RP
+        // thresholds and icons the static ladder deliberately lacks.
+        const ladder = parseLadder([
+            { rank: 'Copper IV', min_mmr: 1100 },
+            { rank: 'Copper V', min_mmr: 1000 },
+        ])!;
+        expect(ladder.map((r) => [r.ordinal, r.label])).toEqual([
+            [1, 'Copper V'],
+            [2, 'Copper IV'],
+        ]);
+    });
+
+    it('leaves an unnumbered, thresholdless ladder in payload order', () => {
+        const ladder = parseLadder([
+            { name: 'Copper V' },
+            { name: 'Copper IV' },
+        ])!;
+        expect(ladder.map((r) => [r.ordinal, r.label])).toEqual([
+            [1, 'Copper V'],
+            [2, 'Copper IV'],
+        ]);
+    });
+
+    it('accepts numbers spelled as strings', () => {
+        // A JSON API that quotes its ids is describing the same rung, and the
+        // difference is not worth falling back to a ladder with no thresholds.
+        const ladder = parseLadder([
+            { id: '18', name: 'Emerald III', min_mmr: '3600' },
+        ])!;
+        expect(ladder[0]!.ordinal).toBe(18);
+        expect(ladder[0]!.minRp).toBe(3600);
     });
 
     it('tolerates alternative field spellings', () => {
@@ -108,7 +175,10 @@ describe('parseLadder', () => {
         expect(ladder[0]!.iconUrl).toBe('https://x/3.png');
     });
 
-    it('skips rows missing a name or an ordinal', () => {
+    it('skips a broken row in an otherwise numbered ladder', () => {
+        // Once *some* row carries an ordinal, one that does not is a broken row
+        // rather than an unnumbered payload, and guessing a number for it would
+        // collide with the real ones.
         const ladder = parseLadder([
             { id: 1, name: 'Copper V' },
             { id: 2 },
@@ -123,6 +193,36 @@ describe('parseLadder', () => {
         for (const body of [null, undefined, {}, [], { data: 'nope' }]) {
             expect(parseLadder(body)).toBeNull();
         }
+    });
+});
+
+describe('describeShape', () => {
+    /**
+     * The half of the fix that survives being wrong about the payload: if some
+     * future ladder is still unparseable, the log line has to say what arrived,
+     * because nobody debugging it has an API key to go and look.
+     */
+    it('names the container and the first row’s keys', () => {
+        expect(describeShape([{ rank: 'PLATINUM II', imageUrl: 'x' }])).toBe(
+            'array(1) of {rank,imageUrl}'
+        );
+        expect(describeShape({ data: [{ id: 1 }] })).toBe(
+            'object{data} first value array(1)'
+        );
+        expect(describeShape(null)).toBe('null');
+        expect(describeShape('nope')).toBe('string');
+    });
+
+    it('caps a hostile payload instead of flooding the log', () => {
+        const wide = Object.fromEntries(
+            Array.from({ length: 30 }, (_, i) => [`k${i}`, i])
+        );
+        const described = describeShape([wide]);
+        expect(described).toContain('…+18');
+        expect(described.length).toBeLessThan(200);
+        expect(describeShape([{ ['x'.repeat(500)]: 1 }]).length).toBeLessThan(
+            200
+        );
     });
 });
 
@@ -471,6 +571,22 @@ describe('R6DataService.getRankLadder', () => {
         expect((await service.getRankLadder())[0]?.minRp).toBeNull();
         expect((await service.getRankLadder())[0]?.minRp).toBe(1000);
         expect(mock).toHaveBeenCalledTimes(2);
+    });
+
+    it('says which version it asked for and what came back', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        respondOnce([{ nothing: 'useful' }]);
+
+        await new R6DataService('key').getRankLadder();
+
+        expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining('object{nothing}')
+        );
+        expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining(
+                `version=${process.env.R6DATA_RANKS_VERSION ?? 'v7'}`
+            )
+        );
     });
 });
 

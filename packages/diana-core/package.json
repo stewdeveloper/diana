@@ -1,6 +1,6 @@
 {
     "name": "diana-core",
-    "version": "2.0.54",
+    "version": "2.0.55",
     "private": false,
     "license": "ISC",
     "main": "dist/index.js",
