@@ -18,8 +18,8 @@
         "cookie-parser": "^1.4.7",
         "express": "^5.2.1",
         "express-rate-limit": "^8.2.1",
-        "diana-core": "2.0.57",
-        "diana-discord": "2.0.28",
+        "diana-core": "2.0.58",
+        "diana-discord": "2.0.29",
         "dotenv": "^17.3.1"
     },
     "devDependencies": {

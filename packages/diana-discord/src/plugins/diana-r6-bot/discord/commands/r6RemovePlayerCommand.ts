@@ -5,7 +5,7 @@ import {
     getR6PlayerIdByName,
     removeR6PlayerFromGuild,
     deleteR6Player,
-    countGuildsTrackingR6Player,
+    countTrackersOfR6Player,
 } from 'diana-core';
 
 export const r6RemovePlayerCommand: SlashCommand = {
@@ -68,11 +68,12 @@ export const r6RemovePlayerCommand: SlashCommand = {
             }
 
             // Nobody left tracking them: drop the player row too, so a stale
-            // profile is not polled forever on every tick. Counted straight
-            // off guild_r6_players — the "where do I post" query filters out
-            // guilds with no channel configured, and deleting on its say-so
-            // cascades this row away from servers that still track them.
-            const remaining = await countGuildsTrackingR6Player(ubisoftId);
+            // profile is not polled forever on every tick. Counted across both
+            // rosters — the "where do I post" query filters out guilds with no
+            // channel configured, and deleting on its say-so cascades this row
+            // away from servers that still track them; counting guilds alone
+            // does the same to anyone who linked the account from Meeps.
+            const remaining = await countTrackersOfR6Player(ubisoftId);
             if (remaining === 0) {
                 await deleteR6Player(ubisoftId).catch(() => {});
             }

@@ -12,6 +12,31 @@ jest.mock('../packages/diana-core/src/core/identity/identityService', () => ({
     getOrCreateIdentityForAccount: getOrCreateIdentityForAccountMock,
 }));
 
+// Unlinking a Siege account also withdraws it from polling (migration 025).
+const removeR6PlayerFromAllSquadsMock = jest.fn();
+const countTrackersOfR6PlayerMock = jest.fn();
+const deleteR6PlayerMock = jest.fn();
+
+jest.mock(
+    '../packages/diana-core/src/plugins/diana-r6-bot/api/players/playerService',
+    () => ({
+        removeR6PlayerFromAllSquads: (...args: unknown[]) =>
+            removeR6PlayerFromAllSquadsMock(...args),
+        countTrackersOfR6Player: (...args: unknown[]) =>
+            countTrackersOfR6PlayerMock(...args),
+        deleteR6Player: (...args: unknown[]) => deleteR6PlayerMock(...args),
+        // Imported by identityApi for the link path, unused here.
+        ensureR6Player: jest.fn(),
+        getR6PlayerById: jest.fn(),
+        addR6PlayerToSquad: jest.fn(),
+        createR6RankHistory: jest.fn(),
+    })
+);
+
+jest.mock('../packages/diana-core/src/core/squads/squadService', () => ({
+    getSquadIdForAttachment: jest.fn(),
+}));
+
 import {
     getIdentity,
     linkMeepsUser,
@@ -264,6 +289,93 @@ describe('DELETE /api/identity/:kind/:externalId', () => {
         );
         expect(res.statusCode).toBe(200);
         expect(res.body).toEqual({ removed: false });
+    });
+
+    /**
+     * Giving up a Siege link gives up the polling that came with it.
+     *
+     * Without this the enrolment outlives the link: nothing in Meeps would still
+     * show the account, and the poller would go on spending a call on it every
+     * hour for as long as the deployment lives — against a plan that affords
+     * about five players.
+     */
+    describe('withdrawing a Siege enrolment', () => {
+        beforeEach(() => {
+            jest.clearAllMocks();
+            unlinkAccountMock.mockResolvedValue(true);
+            removeR6PlayerFromAllSquadsMock.mockResolvedValue(1);
+            countTrackersOfR6PlayerMock.mockResolvedValue(0);
+            deleteR6PlayerMock.mockResolvedValue(null);
+        });
+
+        const unlinkR6 = async () => {
+            const res = makeRes();
+            await unlinkAccountRoute(
+                {
+                    params: { kind: 'r6_ubisoft', externalId: 'ubi-1' },
+                } as any,
+                res
+            );
+            return res;
+        };
+
+        it('drops the squad enrolments and the now-untracked player row', async () => {
+            const res = await unlinkR6();
+
+            expect(removeR6PlayerFromAllSquadsMock).toHaveBeenCalledWith(
+                'ubi-1'
+            );
+            expect(deleteR6PlayerMock).toHaveBeenCalledWith('ubi-1');
+            expect(res.body).toEqual({ removed: true });
+        });
+
+        it('keeps the player row when a Discord server still tracks them', async () => {
+            // One player, two independent reasons to be polled. Unlinking is a
+            // statement about one of them, and deleting the row would cascade
+            // the other away from a server that never asked.
+            countTrackersOfR6PlayerMock.mockResolvedValue(1);
+
+            await unlinkR6();
+
+            expect(removeR6PlayerFromAllSquadsMock).toHaveBeenCalled();
+            expect(deleteR6PlayerMock).not.toHaveBeenCalled();
+        });
+
+        it('leaves the row alone when there was no enrolment to withdraw', async () => {
+            // Somebody who linked before 025, or linked with no space attached.
+            // They have no squad rows, so this must not become a licence to
+            // delete a player row that `/r6-add` owns.
+            removeR6PlayerFromAllSquadsMock.mockResolvedValue(0);
+
+            await unlinkR6();
+
+            expect(countTrackersOfR6PlayerMock).not.toHaveBeenCalled();
+            expect(deleteR6PlayerMock).not.toHaveBeenCalled();
+        });
+
+        it('still reports the unlink when withdrawing throws', async () => {
+            jest.spyOn(console, 'error').mockImplementation(() => {});
+            removeR6PlayerFromAllSquadsMock.mockRejectedValue(
+                new Error('db is down')
+            );
+
+            const res = await unlinkR6();
+
+            expect(res.statusCode).toBe(200);
+            expect(res.body).toEqual({ removed: true });
+        });
+
+        it('does not touch the Siege roster when unlinking anything else', async () => {
+            const res = makeRes();
+            await unlinkAccountRoute(
+                {
+                    params: { kind: 'riot_puuid', externalId: 'puuid-1' },
+                } as any,
+                res
+            );
+
+            expect(removeR6PlayerFromAllSquadsMock).not.toHaveBeenCalled();
+        });
     });
 
     it('rejects an unknown kind', async () => {

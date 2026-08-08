@@ -45,6 +45,42 @@ jest.mock(
     })
 );
 
+// The roster half of a link (migration 025). Mocked rather than left real
+// because the handler swallows enrolment failures on purpose — a link that
+// succeeded must not 500 because a squad lookup did — so an unmocked `db` here
+// would make every assertion below pass whether the enrolment ran or not.
+const ensureR6PlayerMock = jest.fn();
+const getR6PlayerByIdMock = jest.fn();
+const addR6PlayerToSquadMock = jest.fn();
+const createR6RankHistoryMock = jest.fn();
+const removeR6PlayerFromAllSquadsMock = jest.fn();
+const countTrackersOfR6PlayerMock = jest.fn();
+const deleteR6PlayerMock = jest.fn();
+
+jest.mock(
+    '../packages/diana-core/src/plugins/diana-r6-bot/api/players/playerService',
+    () => ({
+        ensureR6Player: (...args: unknown[]) => ensureR6PlayerMock(...args),
+        getR6PlayerById: (...args: unknown[]) => getR6PlayerByIdMock(...args),
+        addR6PlayerToSquad: (...args: unknown[]) =>
+            addR6PlayerToSquadMock(...args),
+        createR6RankHistory: (...args: unknown[]) =>
+            createR6RankHistoryMock(...args),
+        removeR6PlayerFromAllSquads: (...args: unknown[]) =>
+            removeR6PlayerFromAllSquadsMock(...args),
+        countTrackersOfR6Player: (...args: unknown[]) =>
+            countTrackersOfR6PlayerMock(...args),
+        deleteR6Player: (...args: unknown[]) => deleteR6PlayerMock(...args),
+    })
+);
+
+const getSquadIdForAttachmentMock = jest.fn();
+
+jest.mock('../packages/diana-core/src/core/squads/squadService', () => ({
+    getSquadIdForAttachment: (...args: unknown[]) =>
+        getSquadIdForAttachmentMock(...args),
+}));
+
 import {
     cancelRiotChallenge,
     getRiotChallenge,
@@ -383,6 +419,11 @@ describe('POST /api/identity/r6', () => {
                 method: 'self_asserted',
             },
         });
+        getR6PlayerByIdMock.mockResolvedValue(null);
+        ensureR6PlayerMock.mockResolvedValue({ ubisoftId: 'ubi-1' });
+        createR6RankHistoryMock.mockResolvedValue(undefined);
+        addR6PlayerToSquadMock.mockResolvedValue(undefined);
+        getSquadIdForAttachmentMock.mockResolvedValue('squad-1');
     });
 
     it('links a Siege account and records that nobody verified it', async () => {
@@ -503,5 +544,147 @@ describe('POST /api/identity/r6', () => {
 
         expect(res.statusCode).toBe(400);
         expect(getProfileByNameMock).not.toHaveBeenCalled();
+    });
+});
+
+/**
+ * The half of a link that makes it do something (migration 025).
+ *
+ * Before this, linking recorded who owned an account and nothing ever polled it:
+ * `getAllTrackedR6Players` only saw players a Discord guild had added, so a
+ * Meeps user was known and invisible at the same time. These rows pin that a
+ * link is now also an enrolment, and — more importantly — that failing to enrol
+ * never costs somebody the link they asked for.
+ */
+describe('POST /api/identity/r6 — enrolling for polling', () => {
+    beforeEach(() => {
+        getProfileByNameMock.mockResolvedValue({
+            ubisoftId: 'ubi-1',
+            gameName: 'Aidan.TTV',
+            platform: 'uplay',
+            rank: { tier: 'Platinum', division: 4, rp: 3200 },
+        });
+        createSelfAssertedLinkMock.mockResolvedValue({
+            ok: true,
+            account: {
+                kind: 'r6_ubisoft',
+                external_id: 'ubi-1',
+                identity_id: 'id-1',
+                verified_at: null,
+                method: 'self_asserted',
+            },
+        });
+        getR6PlayerByIdMock.mockResolvedValue(null);
+        ensureR6PlayerMock.mockResolvedValue({ ubisoftId: 'ubi-1' });
+        createR6RankHistoryMock.mockResolvedValue(undefined);
+        addR6PlayerToSquadMock.mockResolvedValue(undefined);
+        getSquadIdForAttachmentMock.mockResolvedValue('squad-1');
+    });
+
+    const link = (body: Record<string, unknown> = {}) => {
+        const res = makeRes();
+        return linkR6Account(
+            {
+                body: { ...MEEPS_BODY, gameName: 'Aidan.TTV', ...body },
+            } as any,
+            res
+        ).then(() => res);
+    };
+
+    it('creates the player row the poller reads', async () => {
+        await link({ meepsSpaceIds: ['space-a'] });
+
+        expect(ensureR6PlayerMock).toHaveBeenCalledWith({
+            ubisoftId: 'ubi-1',
+            gameName: 'Aidan.TTV',
+            platform: 'uplay',
+            tier: 'Platinum',
+            division: 4,
+            rp: 3200,
+        });
+    });
+
+    it('enrols the player against every space that resolves to a squad', async () => {
+        getSquadIdForAttachmentMock
+            .mockResolvedValueOnce('squad-a')
+            .mockResolvedValueOnce('squad-b');
+
+        await link({ meepsSpaceIds: ['space-a', 'space-b'] });
+
+        expect(getSquadIdForAttachmentMock).toHaveBeenCalledWith(
+            'meeps_space',
+            'space-a'
+        );
+        expect(addR6PlayerToSquadMock.mock.calls).toEqual([
+            ['squad-a', 'ubi-1', 'meeps-1'],
+            ['squad-b', 'ubi-1', 'meeps-1'],
+        ]);
+    });
+
+    it('skips a space nobody has attached rather than creating a squad for it', async () => {
+        // `getOrCreateSquadForAttachment` exists and would be the wrong call: a
+        // group with both a Discord guild and a Meeps space would end up with
+        // two squads — matches under one, links under the other — and every
+        // query would look healthy and return nothing.
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        getSquadIdForAttachmentMock.mockResolvedValue(null);
+
+        const res = await link({ meepsSpaceIds: ['space-unattached'] });
+
+        expect(addR6PlayerToSquadMock).not.toHaveBeenCalled();
+        expect(res.statusCode).toBe(200);
+    });
+
+    it('records an opening rank history row only for a player we had never seen', async () => {
+        await link({ meepsSpaceIds: ['space-a'] });
+        expect(createR6RankHistoryMock).toHaveBeenCalledWith(
+            'INIT_ubi-1',
+            'ubi-1',
+            'Platinum',
+            4,
+            3200
+        );
+
+        createR6RankHistoryMock.mockClear();
+        getR6PlayerByIdMock.mockResolvedValue({ ubisoftId: 'ubi-1' });
+
+        await link({ meepsSpaceIds: ['space-a'] });
+        expect(createR6RankHistoryMock).not.toHaveBeenCalled();
+    });
+
+    it('links fine with no spaces at all', async () => {
+        // Somebody in no space yet, or a deployment with none attached. The link
+        // is still theirs to make; nothing tracks them until a space is attached
+        // and they link again.
+        const res = await link();
+
+        expect(res.statusCode).toBe(200);
+        expect(addR6PlayerToSquadMock).not.toHaveBeenCalled();
+    });
+
+    it('ignores a malformed meepsSpaceIds instead of refusing the link', async () => {
+        const res = await link({ meepsSpaceIds: 'space-a' });
+
+        expect(res.statusCode).toBe(200);
+        expect(getSquadIdForAttachmentMock).not.toHaveBeenCalled();
+    });
+
+    it('deduplicates spaces so one squad is not written twice', async () => {
+        await link({ meepsSpaceIds: ['space-a', 'space-a'] });
+
+        expect(getSquadIdForAttachmentMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('still reports the link as successful when enrolling throws', async () => {
+        // The link is committed by this point and is the thing the person asked
+        // for. A 500 here would tell them their account did not link, and they
+        // would try again — against an account that is already theirs.
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        ensureR6PlayerMock.mockRejectedValue(new Error('db is down'));
+
+        const res = await link({ meepsSpaceIds: ['space-a'] });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body.account.identity_id).toBe('id-1');
     });
 });

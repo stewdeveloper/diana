@@ -87,7 +87,7 @@ import {
     notifyR6RankChange,
     notifyR6Session,
 } from '../packages/diana-core/src/plugins/diana-r6-bot/notifications/r6Notifications';
-import { ACTIVE_WINDOW_MINUTES } from '../packages/diana-core/src/plugins/diana-r6-bot/monitoring/r6PollScheduler';
+import { DEFAULT_R6_POLL_CADENCE } from '../packages/diana-core/src/plugins/diana-r6-bot/monitoring/r6PollScheduler';
 import type {
     DianaEvent,
     EventAdapter,
@@ -102,6 +102,27 @@ const snapshotMock = updateR6PlayerRankAndSnapshot as jest.Mock;
 const matchMock = notifyR6Match as jest.Mock;
 const rankChangeMock = notifyR6RankChange as jest.Mock;
 const sessionMock = notifyR6Session as jest.Mock;
+
+/**
+ * A fixed wall clock, 20:30 UTC.
+ *
+ * Most cases below call `runR6Tick` without an explicit `now`, so they read the
+ * real clock — and the scheduler refuses to poll anybody between 01:30 and
+ * 09:00. Left to the real clock this whole file would pass all day and fail
+ * overnight, which is the worst shape a test failure can take. 20:30 is also
+ * deliberately off a slot boundary, so "polled a minute ago" means the same slot
+ * rather than the previous one.
+ */
+const WALL_CLOCK = new Date('2026-08-06T20:30:00.000Z');
+
+beforeAll(() => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+    jest.setSystemTime(WALL_CLOCK);
+});
+
+afterAll(() => {
+    jest.useRealTimers();
+});
 
 /** The stored row: Platinum V on 3,000 RP, with a full snapshot baseline. */
 const storedPlayer = (overrides: Record<string, unknown> = {}) => ({
@@ -625,22 +646,44 @@ describe('runR6Tick — spending the budget', () => {
     });
 
     it('skips a player who is not yet due', async () => {
-        // The heartbeat runs every 5 minutes and the idle interval is hours; a
+        // The heartbeat runs every 5 minutes and the poll interval is an hour; a
         // tick with nobody due must cost nothing.
-        const now = new Date('2026-08-06T20:00:00.000Z');
+        const now = new Date('2026-08-06T20:30:00.000Z');
         trackedMock.mockResolvedValue([
             {
                 ubisoftId: 'ubi-1',
                 gameName: 'Ash',
                 platform: 'uplay',
                 lastPolledAt: new Date(now.getTime() - 60_000).toISOString(),
-                activeUntil: null,
             },
         ]);
 
         await runR6Tick(null, recordingAdapter(), { now });
 
         expect(getTrackedProfile).not.toHaveBeenCalled();
+    });
+
+    it('issues nothing during the quiet window, and does not even ask who is due', async () => {
+        // Checked before the roster read: during the window every player would
+        // be filtered out anyway, so loading them is a query per heartbeat —
+        // around 90 a night — to build a list that is always discarded.
+        await runR6Tick(null, recordingAdapter(), {
+            now: new Date('2026-08-06T04:00:00.000Z'),
+        });
+
+        expect(trackedMock).not.toHaveBeenCalled();
+        expect(currentR6BudgetPlan).not.toHaveBeenCalled();
+        expect(getTrackedProfile).not.toHaveBeenCalled();
+        expect(polledMock).not.toHaveBeenCalled();
+    });
+
+    it('polls the first slot after the quiet window ends', async () => {
+        // The night's play is not lost, it is noticed at 09:00 as one session.
+        await runR6Tick(null, recordingAdapter(), {
+            now: new Date('2026-08-06T09:00:00.000Z'),
+        });
+
+        expect(getTrackedProfile).toHaveBeenCalledTimes(1);
     });
 
     it('records the poll even when nothing changed', async () => {
@@ -663,8 +706,7 @@ describe('runR6Tick — spending the budget', () => {
         await runR6Tick(null, recordingAdapter());
 
         expect(polledMock).toHaveBeenCalledTimes(1);
-        // Quiet poll, so the active window is left exactly as it was.
-        expect(polledMock.mock.calls[0][1]).toBeNull();
+        expect(polledMock).toHaveBeenCalledWith('ubi-1');
     });
 
     it('records the poll even when the provider threw', async () => {
@@ -679,14 +721,59 @@ describe('runR6Tick — spending the budget', () => {
         expect(polledMock).toHaveBeenCalledTimes(1);
     });
 
-    it('opens the active window when something moved', async () => {
-        const now = new Date('2026-08-06T20:00:00.000Z');
-        await runR6Tick(null, recordingAdapter(), { now });
+    it('records the poll the same way whether or not anything moved', async () => {
+        // The scheduler no longer takes movement as an input: a fixed interval
+        // does not care whether somebody looks mid-session, so there is one
+        // write and it carries nothing but who was polled.
+        await runR6Tick(null, recordingAdapter(), {
+            now: new Date('2026-08-06T20:30:00.000Z'),
+        });
 
-        const activeUntil = polledMock.mock.calls[0][1] as Date;
-        expect(activeUntil.getTime() - now.getTime()).toBe(
-            ACTIVE_WINDOW_MINUTES * 60_000
-        );
+        expect(polledMock.mock.calls).toEqual([['ubi-1']]);
+    });
+
+    it('polls on the hour rather than drifting from the last poll', async () => {
+        // An elapsed-time cadence would make a 10:03 poll due at 11:03, noticed
+        // at 11:05, and so on until the polls had wandered across the clock.
+        trackedMock.mockResolvedValue([
+            {
+                ubisoftId: 'ubi-1',
+                gameName: 'Ash',
+                platform: 'uplay',
+                lastPolledAt: '2026-08-06T10:03:00.000Z',
+            },
+        ]);
+
+        await runR6Tick(null, recordingAdapter(), {
+            now: new Date('2026-08-06T10:59:00.000Z'),
+        });
+        expect(getTrackedProfile).not.toHaveBeenCalled();
+
+        await runR6Tick(null, recordingAdapter(), {
+            now: new Date('2026-08-06T11:00:00.000Z'),
+        });
+        expect(getTrackedProfile).toHaveBeenCalledTimes(1);
+    });
+
+    it('widens to whole hours under budget pressure', async () => {
+        // Fractional pressure would give an 84-minute interval whose slots walk
+        // across the clock, undoing the alignment above.
+        currentR6BudgetPlan.mockResolvedValue(budgetPlan({ pressure: 2 }));
+        trackedMock.mockResolvedValue([
+            {
+                ubisoftId: 'ubi-1',
+                gameName: 'Ash',
+                platform: 'uplay',
+                lastPolledAt: '2026-08-06T10:30:00.000Z',
+            },
+        ]);
+
+        await runR6Tick(null, recordingAdapter(), {
+            now: new Date('2026-08-06T11:00:00.000Z'),
+        });
+
+        expect(getTrackedProfile).not.toHaveBeenCalled();
+        expect(DEFAULT_R6_POLL_CADENCE.pollMinutes).toBe(60);
     });
 
     it('polls no more players than the remaining budget allows', async () => {

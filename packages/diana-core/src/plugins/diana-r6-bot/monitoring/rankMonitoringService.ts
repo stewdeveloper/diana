@@ -31,7 +31,7 @@ import {
 import { currentR6BudgetPlan } from '../api/utils/r6Budget.js';
 import {
     DEFAULT_R6_POLL_CADENCE,
-    nextActiveUntil,
+    isQuietHours,
     selectPlayersToPoll,
     type R6PollCadence,
 } from './r6PollScheduler.js';
@@ -79,26 +79,31 @@ export function resolveSingleMatch(gained: R6SnapshotDiff): {
 
 /** Plugin config, narrowed to the cadence knobs, with the defaults applied. */
 export function cadenceFromConfig(config?: {
-    activePollMinutes?: number;
-    idlePollMinutes?: number;
-    activeWindowMinutes?: number;
+    pollMinutes?: number;
+    quietHoursStart?: string;
+    quietHoursEnd?: string;
+    quietHoursTimeZone?: string;
 }): R6PollCadence {
     const positive = (value: unknown, fallback: number): number =>
         typeof value === 'number' && Number.isFinite(value) && value > 0
             ? value
             : fallback;
+    const text = (value: unknown, fallback: string): string =>
+        typeof value === 'string' && value.trim() ? value.trim() : fallback;
+
     return {
-        activePollMinutes: positive(
-            config?.activePollMinutes,
-            DEFAULT_R6_POLL_CADENCE.activePollMinutes
+        pollMinutes: positive(
+            config?.pollMinutes,
+            DEFAULT_R6_POLL_CADENCE.pollMinutes
         ),
-        idlePollMinutes: positive(
-            config?.idlePollMinutes,
-            DEFAULT_R6_POLL_CADENCE.idlePollMinutes
+        quietStart: text(
+            config?.quietHoursStart,
+            DEFAULT_R6_POLL_CADENCE.quietStart
         ),
-        activeWindowMinutes: positive(
-            config?.activeWindowMinutes,
-            DEFAULT_R6_POLL_CADENCE.activeWindowMinutes
+        quietEnd: text(config?.quietHoursEnd, DEFAULT_R6_POLL_CADENCE.quietEnd),
+        timeZone: text(
+            config?.quietHoursTimeZone,
+            DEFAULT_R6_POLL_CADENCE.timeZone
         ),
     };
 }
@@ -121,6 +126,12 @@ export async function runR6Tick(
 
     const cadence = options.cadence ?? DEFAULT_R6_POLL_CADENCE;
     const now = options.now ?? new Date();
+
+    // Checked before the roster read, not inside `selectPlayersToPoll`. During
+    // the quiet window every player would be filtered out anyway, so asking the
+    // database for them first is a query per heartbeat — around 90 a night — to
+    // build a list that is always discarded.
+    if (isQuietHours(now, cadence)) return;
 
     let players;
     try {
@@ -159,9 +170,8 @@ export async function runR6Tick(
     );
 
     for (const player of due) {
-        let moved = false;
         try {
-            moved = await processPlayer(player, adapter, eventAdapter);
+            await processPlayer(player, adapter, eventAdapter);
         } catch (err) {
             console.error(`[R6] Error processing ${player.gameName}:`, err);
         }
@@ -179,10 +189,7 @@ export async function runR6Tick(
         //   - the write itself fails, which is the one case that cannot be fixed
         //     here. It is logged, and the next tick re-polls: one wasted call,
         //     not a loop.
-        await markR6PlayerPolled(
-            player.ubisoftId,
-            nextActiveUntil(player, moved, now, cadence)
-        ).catch((err) =>
+        await markR6PlayerPolled(player.ubisoftId).catch((err) =>
             console.error(
                 `[R6] Failed to record the poll for ${player.gameName}:`,
                 err
@@ -220,8 +227,9 @@ async function processPlayer(
 /**
  * Post whatever this poll turned out to be, and return whether anything moved.
  *
- * The return value is the scheduler's input: movement is the only evidence we
- * have that somebody is mid-session, and it is what extends the active window.
+ * The return value is no longer wired to the scheduler — a fixed interval does
+ * not care whether a player is mid-session — but it is still the honest answer
+ * to "did this call find anything", which is what the tests assert on.
  */
 async function postSessionIfChanged(
     ubisoftId: string,
