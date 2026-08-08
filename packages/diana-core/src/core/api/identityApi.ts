@@ -23,6 +23,16 @@ import { buildProfileIconUrl } from '../../plugins/diana-league-bot/api/utils/da
 import { createLolService } from '../../plugins/diana-league-bot/api/utils/lolService/lolServiceFactory';
 import { createR6Service } from '../../plugins/diana-r6-bot/api/utils/r6ServiceFactory';
 import { R6_PLATFORMS } from '../../plugins/diana-r6-bot/types';
+import {
+    addR6PlayerToSquad,
+    countTrackersOfR6Player,
+    createR6RankHistory,
+    deleteR6Player,
+    ensureR6Player,
+    getR6PlayerById,
+    removeR6PlayerFromAllSquads,
+} from '../../plugins/diana-r6-bot/api/players/playerService';
+import { getSquadIdForAttachment } from '../squads/squadService';
 import { requireMeepsSecret } from './presenceApi';
 import { getParamValue } from './requestUtils';
 
@@ -342,11 +352,56 @@ export async function unlinkAccountRoute(
     try {
         const removed = await unlinkAccount(kind, externalId);
         console.log(`[identity] Unlinked ${kind} ${externalId}.`);
+
+        // Giving up the link gives up the polling that came with it. Without
+        // this the enrolment outlives the link: nothing in Meeps would still
+        // show the account, and the poller would go on spending a call on it
+        // every interval for as long as the deployment lives.
+        if (kind === 'r6_ubisoft') {
+            await withdrawR6Enrolment(externalId).catch((err) =>
+                // `externalId` is passed as an argument rather than interpolated
+                // into the first one, and that is not style. The first argument
+                // to `console.error` is a *format string*: `util.format` reads
+                // `%s`/`%d`/`%o` in it as substitutions and consumes the
+                // arguments that follow. An id containing `%s` — and this one
+                // arrives on the request path — would swallow `err` into the
+                // message, so the failure being reported is the one that
+                // vanishes. (CodeQL js/tainted-format-string.)
+                console.error(
+                    `[${timestamp()}] [identity] Unlinked an account but could not withdraw its enrolment:`,
+                    externalId,
+                    err
+                )
+            );
+        }
+
         res.json({ removed });
     } catch (err) {
         console.error(`[${timestamp()}] [identity] Unlink error:`, err);
         res.status(500).json({ error: 'Failed to unlink account' });
     }
+}
+
+/**
+ * Undo what `enrolLinkedR6Player` did.
+ *
+ * Drops every squad enrolment, then deletes the player row only if that left
+ * nobody at all tracking them. The count spans both rosters on purpose: an
+ * account linked in Meeps *and* added by `/r6-add` in a Discord server is one
+ * player with two independent reasons to be polled, and unlinking is a statement
+ * about one of them. Deleting the row would cascade the other away.
+ */
+async function withdrawR6Enrolment(ubisoftId: string): Promise<void> {
+    const dropped = await removeR6PlayerFromAllSquads(ubisoftId);
+    if (dropped === 0) return;
+
+    const remaining = await countTrackersOfR6Player(ubisoftId);
+    if (remaining > 0) return;
+
+    await deleteR6Player(ubisoftId);
+    console.log(
+        `[identity] ${ubisoftId} is no longer tracked by anyone; dropped the player row.`
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -601,6 +656,106 @@ export async function cancelRiotChallenge(
 // ---------------------------------------------------------------------------
 
 /**
+ * Space public ids from a link request. Absent, empty and malformed all mean
+ * "no spaces", because none of them is a reason to refuse the link itself.
+ */
+function parseMeepsSpaceIds(body: Record<string, unknown>): string[] {
+    const raw = body.meepsSpaceIds;
+    if (!Array.isArray(raw)) return [];
+    const ids = raw
+        .filter((id): id is string => typeof id === 'string')
+        .map((id) => id.trim())
+        .filter(Boolean);
+    return [...new Set(ids)];
+}
+
+/**
+ * Put a freshly linked Siege account onto the poller's work list.
+ *
+ * WHY THIS IS HERE AND NOT IN THE POLLER
+ *
+ * `getAllTrackedR6Players` is a read over two rosters; it does not enrol anyone.
+ * Before 025 the only writer was `/r6-add`, so linking an account in Meeps
+ * recorded who owned it and nothing ever polled it — the account was known and
+ * invisible at the same time. This closes that: a link is now also an enrolment.
+ *
+ * WHY IT TAKES SPACE IDS RATHER THAN SQUAD IDS
+ *
+ * Diana owns the `(kind, external_id) -> squad` mapping and Meeps owns space
+ * membership, so each side sends what it actually knows. This mirrors
+ * `presenceService`, including the part that matters most: it resolves through
+ * `squad_attachments` and **does not create the squad**. A space nobody has
+ * attached is a setup step that has not happened, and self-attaching here would
+ * hand a friend group with both a Discord guild and a Meeps space two squads —
+ * matches under one, links under the other, every query healthy and empty.
+ *
+ * WHAT A FAILURE HERE COSTS
+ *
+ * Nothing that should fail the request. The link is the thing the person asked
+ * for and it is already committed; enrolment is a consequence of it, and a
+ * squad that could not be resolved is worth a log line rather than a 500 that
+ * makes them think their account did not link. The next link attempt re-enrols.
+ */
+async function enrolLinkedR6Player(
+    profile: {
+        ubisoftId: string;
+        gameName: string;
+        platform: string;
+        rank: { tier: string; division: number; rp: number };
+    },
+    spaceIds: string[],
+    addedBy: string
+): Promise<void> {
+    // Read before the upsert: `ensureR6Player` is deliberately silent about
+    // whether it inserted, and the opening rank history row is only honest for
+    // a player we had never seen.
+    const known = await getR6PlayerById(profile.ubisoftId);
+
+    await ensureR6Player({
+        ubisoftId: profile.ubisoftId,
+        gameName: profile.gameName,
+        platform: profile.platform,
+        tier: profile.rank.tier,
+        division: profile.rank.division,
+        rp: profile.rank.rp,
+    });
+
+    if (!known) {
+        await createR6RankHistory(
+            `INIT_${profile.ubisoftId}`,
+            profile.ubisoftId,
+            profile.rank.tier,
+            profile.rank.division,
+            profile.rank.rp
+        ).catch((err) =>
+            console.error(
+                '[identity] Failed to record an initial rank for:',
+                profile.ubisoftId,
+                err
+            )
+        );
+    }
+
+    const unattached: string[] = [];
+    for (const spaceId of spaceIds) {
+        const squadId = await getSquadIdForAttachment('meeps_space', spaceId);
+        if (!squadId) {
+            unattached.push(spaceId);
+            continue;
+        }
+        await addR6PlayerToSquad(squadId, profile.ubisoftId, addedBy);
+    }
+
+    if (unattached.length > 0) {
+        console.warn(
+            `[identity] ${profile.gameName} linked, but ${unattached.length} space(s) ` +
+                `are not attached to a squad, so no squad tracks them there: ` +
+                unattached.join(', ')
+        );
+    }
+}
+
+/**
  * POST /api/identity/r6 — link a Siege account.
  *
  * The Ubisoft lookup is not verification and is not pretending to be. It does
@@ -609,6 +764,11 @@ export async function cancelRiotChallenge(
  * profile, which catches the typo that would otherwise become a permanent link
  * to nothing. What it cannot do is tell the owner from anybody else, so the row
  * it writes is `self_asserted` and `verified_at` stays null.
+ *
+ * Since 025 a successful link also enrols the account for polling against every
+ * squad the caller's spaces resolve to — see `enrolLinkedR6Player`. The Ubisoft
+ * call this handler already makes is the same one `/r6-add` spends to enrol
+ * somebody, so the enrolment is free: no second request, no extra budget.
  */
 export async function linkR6Account(
     req: Request,
@@ -684,6 +844,23 @@ export async function linkR6Account(
         console.log(
             `[identity] Linked r6_ubisoft ${profile.ubisoftId} to ${outcome.account.identity_id}.`
         );
+
+        // After the link is committed and outside its success path's ability to
+        // fail it — see the note on `enrolLinkedR6Player`.
+        try {
+            await enrolLinkedR6Player(
+                profile,
+                parseMeepsSpaceIds(body),
+                subject.id
+            );
+        } catch (err) {
+            console.error(
+                `[${timestamp()}] [identity] Linked an account but could not enrol it for polling:`,
+                profile.ubisoftId,
+                err
+            );
+        }
+
         res.json({
             identityId: outcome.account.identity_id,
             account: outcome.account,

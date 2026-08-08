@@ -45,7 +45,14 @@ export interface R6Player {
      * needs "when did I last pay for a reading", which is most polls.
      */
     lastPolledAt: string | null;
-    /** Poll this player at the active cadence until here. See r6PollScheduler. */
+    /**
+     * When this player was last seen moving (migration 023).
+     *
+     * Vestigial: it drove the adaptive cadence that `r6PollScheduler` replaced
+     * with a fixed interval, and nothing reads it now. Kept on the row and on
+     * this type because the values are a real record of activity and dropping
+     * the column would destroy them for no gain.
+     */
     activeUntil: string | null;
 }
 
@@ -145,22 +152,23 @@ export interface R6BotConfig {
     /**
      * Cron schedule for the poll heartbeat.
      *
-     * This is no longer the poll cadence. The heartbeat only asks *who is due*;
-     * the cadence is per-player and lives in the three settings below, because a
-     * single interval cannot both fit 3,000 calls a month and be narrow enough
-     * to resolve individual matches. Running the heartbeat faster than
-     * `activePollMinutes` costs nothing — a tick with nobody due spends no
-     * requests.
+     * This is not the poll cadence. The heartbeat only asks *who is due*; the
+     * cadence is per-player and lives in the settings below. Running the
+     * heartbeat faster than `pollMinutes` costs nothing — a tick with nobody due
+     * spends no requests — and running it slower is what actually delays polls,
+     * since a slot can only be noticed by a tick that lands inside it.
      */
     rankCheckCron: string;
     /** Default Discord channel ID for notifications. */
     defaultDiscordChannelId?: string;
-    /** Minutes between polls while a player looks mid-session. */
-    activePollMinutes?: number;
-    /** Minutes between polls while nothing has moved. */
-    idlePollMinutes?: number;
-    /** How long movement keeps a player on the active cadence. */
-    activeWindowMinutes?: number;
+    /** Minutes between polls, aligned to clock boundaries. */
+    pollMinutes?: number;
+    /** `HH:MM` start of the nightly window where nobody is polled. */
+    quietHoursStart?: string;
+    /** `HH:MM` end of it. Equal to the start means no quiet window. */
+    quietHoursEnd?: string;
+    /** IANA zone the quiet window is measured in. Defaults to the process TZ. */
+    quietHoursTimeZone?: string;
 }
 
 export const R6_GAME_ID = 'rainbow_six_siege';

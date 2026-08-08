@@ -10,9 +10,15 @@ import {
     createR6RankHistory,
     getMostRecentR6Rank,
     countGuildsTrackingR6Player,
+    countTrackersOfR6Player,
+    getAllTrackedR6Players,
     getGuildsTrackingR6Player,
     getSquadsTrackingR6Player,
     getR6PlayerIdByName,
+    addR6PlayerToSquad,
+    removeR6PlayerFromAllSquads,
+    ensureR6Player,
+    markR6PlayerPolled,
     diffSnapshot,
 } from '../packages/diana-core/src/plugins/diana-r6-bot/api/players/playerService';
 
@@ -162,6 +168,149 @@ describe('r6PlayerService', () => {
             await expect(getSquadsTrackingR6Player('ubi-abc')).resolves.toEqual(
                 []
             );
+        });
+
+        it('also reaches squads through the Meeps roster (025)', async () => {
+            // The branch that makes a Meeps-only squad possible at all. Without
+            // it the walk starts at guild_r6_players, so a space with no Discord
+            // guild behind it can never be reached however the link was made.
+            await getSquadsTrackingR6Player('ubi-abc');
+
+            expect(sqlOf()).toContain('FROM squad_r6_players');
+            expect(sqlOf()).toContain('UNION');
+            // UNION, not UNION ALL: a squad owning both a guild that tracks this
+            // player and a Meeps enrolment for them would otherwise be emitted
+            // to twice for one poll.
+            expect(sqlOf()).not.toContain('UNION ALL');
+        });
+    });
+
+    /**
+     * The two rosters, and the ways they can be got wrong.
+     *
+     * Both are real and independent (migration 025): a guild tracks whoever
+     * `/r6-add` named, a squad tracks whoever linked in Meeps, and the same
+     * player can be in both. Every read that treats one as the whole picture is
+     * a bug, and these are the reads that used to.
+     */
+    describe('the two rosters', () => {
+        describe('getAllTrackedR6Players', () => {
+            it('polls players from either roster', async () => {
+                await getAllTrackedR6Players();
+
+                expect(sqlOf()).toContain('guild_r6_players');
+                expect(sqlOf()).toContain('squad_r6_players');
+            });
+
+            it('returns a player in both rosters once', async () => {
+                // This is the poller's work list. A player listed twice is two
+                // r6data calls a tick to learn one thing, against a plan that
+                // allows about 495 a month each. `EXISTS` answers the question
+                // directly; the join it replaced multiplied a player by the
+                // number of guilds tracking them and leant on DISTINCT.
+                await getAllTrackedR6Players();
+
+                expect(sqlOf()).toContain('EXISTS');
+                expect(sqlOf()).not.toContain('JOIN');
+                expect(sqlOf()).not.toContain('DISTINCT');
+            });
+        });
+
+        describe('countTrackersOfR6Player', () => {
+            it('counts both rosters', async () => {
+                // `/r6-remove` deletes the r6_players row once this hits zero,
+                // and that row is the parent of both rosters. Counting guilds
+                // alone would cascade away every Meeps enrolment the moment the
+                // last Discord server stopped tracking somebody.
+                queryMock.mockResolvedValueOnce({ rows: [{ count: 3 }] });
+
+                await expect(countTrackersOfR6Player('ubi-abc')).resolves.toBe(
+                    3
+                );
+                expect(sqlOf()).toContain('guild_r6_players');
+                expect(sqlOf()).toContain('squad_r6_players');
+            });
+
+            it('reports zero rather than undefined when nothing comes back', async () => {
+                await expect(countTrackersOfR6Player('ubi-abc')).resolves.toBe(
+                    0
+                );
+            });
+
+            it('is a different question from countGuildsTrackingR6Player', async () => {
+                await countGuildsTrackingR6Player('ubi-abc');
+                expect(sqlOf()).not.toContain('squad_r6_players');
+            });
+        });
+
+        describe('addR6PlayerToSquad', () => {
+            it('is idempotent, because linking twice is not an error', async () => {
+                await addR6PlayerToSquad('squad-1', 'ubi-abc', 'meeps-1');
+
+                expect(sqlOf()).toContain('INSERT INTO squad_r6_players');
+                expect(sqlOf()).toContain(
+                    'ON CONFLICT (squad_id, "ubisoftId") DO NOTHING'
+                );
+                expect(queryMock.mock.calls[0]?.[1]).toEqual([
+                    'squad-1',
+                    'ubi-abc',
+                    'meeps-1',
+                ]);
+            });
+        });
+
+        describe('removeR6PlayerFromAllSquads', () => {
+            it('takes no squad id, so a space left since linking is not missed', async () => {
+                // Unlinking is withdrawing the account, not leaving one group.
+                queryMock.mockResolvedValueOnce({ rows: [], rowCount: 2 });
+
+                await expect(
+                    removeR6PlayerFromAllSquads('ubi-abc')
+                ).resolves.toBe(2);
+                expect(sqlOf()).toContain('DELETE FROM squad_r6_players');
+                expect(queryMock.mock.calls[0]?.[1]).toEqual(['ubi-abc']);
+            });
+        });
+    });
+
+    describe('ensureR6Player', () => {
+        it('does not clobber the rank baseline when the row already exists', async () => {
+            // The one thing this must never do. tier/division/rp are what the
+            // next poll diffs against; writing a reading taken now would tell it
+            // nothing had moved since, swallowing whatever the player did in
+            // between. The display name is worth refreshing — Ubisoft names
+            // change — and nothing else is.
+            queryMock.mockResolvedValueOnce({
+                rows: [{ ubisoftId: 'ubi-abc', gameName: 'Aidan.TTV' }],
+            });
+
+            await ensureR6Player({
+                ubisoftId: 'ubi-abc',
+                gameName: 'Aidan.TTV',
+                platform: 'uplay',
+                tier: 'Platinum',
+                division: 4,
+                rp: 3200,
+            });
+
+            expect(sqlOf()).toContain('ON CONFLICT ("ubisoftId") DO UPDATE');
+            expect(sqlOf()).toContain('SET "gameName" = EXCLUDED."gameName"');
+            expect(sqlOf()).not.toContain('tier = EXCLUDED');
+            expect(sqlOf()).not.toContain('rp = EXCLUDED');
+            expect(sqlOf()).not.toContain('kills_snapshot = EXCLUDED');
+            // DO UPDATE rather than DO NOTHING: the latter returns no row, and
+            // the caller needs one back.
+            expect(sqlOf()).toContain('RETURNING *');
+        });
+    });
+
+    describe('markR6PlayerPolled', () => {
+        it('records the poll without touching the vestigial active window', async () => {
+            await markR6PlayerPolled('ubi-abc');
+
+            expect(sqlOf()).toContain('SET last_polled_at = NOW()');
+            expect(sqlOf()).not.toContain('active_until');
+            expect(queryMock.mock.calls[0]?.[1]).toEqual(['ubi-abc']);
         });
     });
 

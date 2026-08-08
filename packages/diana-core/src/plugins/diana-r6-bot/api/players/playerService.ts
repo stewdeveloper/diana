@@ -49,6 +49,48 @@ export const getR6PlayerIdByName = async (
     return result.rows[0]?.ubisoftId ?? null;
 };
 
+/**
+ * Create the player row if it is not already there, and return it either way.
+ *
+ * The linking path needs this and `createR6Player` cannot serve it: two people
+ * in different Meeps spaces linking the same Ubisoft account is ordinary, and a
+ * plain INSERT makes the second one a 500.
+ *
+ * **`DO UPDATE` touches the display name and nothing else.** Ubisoft names
+ * change and the fresh one is worth taking, but `tier`, `division` and `rp` are
+ * the poller's diffing baseline — overwriting them with a reading taken now
+ * would tell the next poll that nothing has moved since, silently swallowing
+ * whatever the player did between the two. The counter snapshots are left alone
+ * for the same reason. `DO UPDATE` rather than `DO NOTHING` because the latter
+ * returns no row, and the caller needs one.
+ */
+export const ensureR6Player = async (data: {
+    ubisoftId: string;
+    gameName: string;
+    platform: string;
+    tier: string;
+    division: number;
+    rp: number;
+}): Promise<R6Player> => {
+    const result = await db.query(
+        `INSERT INTO r6_players
+            ("ubisoftId", "gameName", platform, tier, division, rp)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT ("ubisoftId") DO UPDATE
+            SET "gameName" = EXCLUDED."gameName"
+         RETURNING *`,
+        [
+            data.ubisoftId,
+            data.gameName,
+            data.platform,
+            data.tier,
+            data.division,
+            data.rp,
+        ]
+    );
+    return rowToR6Player(result.rows[0])!;
+};
+
 export const createR6Player = async (data: {
     ubisoftId: string;
     gameName: string;
@@ -114,8 +156,7 @@ export const updateR6PlayerRankAndSnapshot = async (
 };
 
 /**
- * Record that a call was spent on this player, and where their active window
- * now sits (migration 023).
+ * Record that a call was spent on this player (migration 023).
  *
  * Separate from `updateR6PlayerRankAndSnapshot` because it must happen on *every*
  * poll, including the overwhelming majority that find nothing changed and return
@@ -123,16 +164,17 @@ export const updateR6PlayerRankAndSnapshot = async (
  * rank never moves with a null `last_polled_at` forever, and therefore always
  * due — the poller would spend its entire budget on the quietest player in the
  * table.
+ *
+ * Does not touch `active_until`. That column belonged to the adaptive scheduler
+ * this replaced, where movement widened a window that then bought a faster
+ * cadence; a fixed interval has no such state. It is left in place rather than
+ * dropped in a migration — the values are a record of when players were last
+ * seen moving, and nothing is gained by destroying them.
  */
-export const markR6PlayerPolled = async (
-    ubisoftId: string,
-    activeUntil: Date | null
-): Promise<void> => {
+export const markR6PlayerPolled = async (ubisoftId: string): Promise<void> => {
     await db.query(
-        `UPDATE r6_players
-         SET last_polled_at = NOW(), active_until = $1
-         WHERE "ubisoftId" = $2`,
-        [activeUntil, ubisoftId]
+        `UPDATE r6_players SET last_polled_at = NOW() WHERE "ubisoftId" = $1`,
+        [ubisoftId]
     );
 };
 
@@ -182,11 +224,29 @@ export const searchR6PlayerNames = async (
     return result.rows.map((r: { gameName: string }) => r.gameName);
 };
 
+/**
+ * Every player somebody is tracking, from either roster.
+ *
+ * Two rosters, unioned (migration 025): `guild_r6_players` is what `/r6-add`
+ * writes, `squad_r6_players` is what linking a Siege account in Meeps writes.
+ * A player in both appears once — this is the poller's work list, and polling
+ * somebody twice a tick would spend two calls to learn one thing.
+ *
+ * `EXISTS` rather than `JOIN ... DISTINCT`: a player tracked by four guilds
+ * joins to four rows that `DISTINCT` then has to collapse, and the semipredicate
+ * is both cheaper and closer to the question being asked.
+ */
 export const getAllTrackedR6Players = async (): Promise<R6Player[]> => {
     const result = await db.query(
-        `SELECT DISTINCT r.*
-         FROM r6_players r
-         JOIN guild_r6_players grp ON grp."ubisoftId" = r."ubisoftId"`,
+        `SELECT r.* FROM r6_players r
+         WHERE EXISTS (
+                   SELECT 1 FROM guild_r6_players g
+                   WHERE g."ubisoftId" = r."ubisoftId"
+               )
+            OR EXISTS (
+                   SELECT 1 FROM squad_r6_players s
+                   WHERE s."ubisoftId" = r."ubisoftId"
+               )`,
         []
     );
     return result.rows.map(rowToR6Player).filter(Boolean) as R6Player[];
@@ -221,20 +281,76 @@ export const getGuildsTrackingR6Player = async (
  * "where do I post", so it inner-joins `guild_config` and drops any guild with
  * no notification channel. An event is a fact about the group and should be
  * captured whether or not anywhere is configured to announce it.
+ *
+ * Since 025 there are two ways to arrive at a squad, and both branches are here.
+ * The `UNION` half walks backwards through Discord as described above; the
+ * second half reads `squad_r6_players` directly, which is how a Meeps space with
+ * no Discord guild behind it reaches its squad at all. `UNION` rather than
+ * `UNION ALL` because a squad that owns both a guild tracking this player and a
+ * Meeps enrolment for them would otherwise be emitted to twice.
  */
 export const getSquadsTrackingR6Player = async (
     ubisoftId: string
 ): Promise<string[]> => {
     const result = await db.query(
-        `SELECT DISTINCT sa.squad_id
-         FROM guild_r6_players grp
-         JOIN squad_attachments sa
-           ON sa.kind = 'discord_guild' AND sa.external_id = grp.guild_id
-         WHERE grp."ubisoftId" = $1
-         ORDER BY sa.squad_id ASC`,
+        `SELECT sa.squad_id
+           FROM guild_r6_players grp
+           JOIN squad_attachments sa
+             ON sa.kind = 'discord_guild' AND sa.external_id = grp.guild_id
+          WHERE grp."ubisoftId" = $1
+         UNION
+         SELECT sr.squad_id
+           FROM squad_r6_players sr
+          WHERE sr."ubisoftId" = $1
+          ORDER BY 1 ASC`,
         [ubisoftId]
     );
     return result.rows.map((row: { squad_id: string }) => row.squad_id);
+};
+
+/**
+ * Enrol a player in a squad's roster. Idempotent — linking twice is not an error.
+ */
+export const addR6PlayerToSquad = async (
+    squadId: string,
+    ubisoftId: string,
+    addedBy?: string | null
+): Promise<void> => {
+    await db.query(
+        `INSERT INTO squad_r6_players (squad_id, "ubisoftId", added_by)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (squad_id, "ubisoftId") DO NOTHING`,
+        [squadId, ubisoftId, addedBy ?? null]
+    );
+};
+
+export const removeR6PlayerFromSquad = async (
+    squadId: string,
+    ubisoftId: string
+): Promise<boolean> => {
+    const result = await db.query(
+        `DELETE FROM squad_r6_players WHERE squad_id = $1 AND "ubisoftId" = $2`,
+        [squadId, ubisoftId]
+    );
+    return (result.rowCount ?? 0) > 0;
+};
+
+/**
+ * Drop every squad enrolment for this player, whatever squad it was in.
+ *
+ * What unlinking a Siege account in Meeps calls. It takes no squad id on
+ * purpose: the person is withdrawing the account, not leaving one group, and
+ * making the caller enumerate their spaces first would leave an enrolment behind
+ * for any space they had left since linking.
+ */
+export const removeR6PlayerFromAllSquads = async (
+    ubisoftId: string
+): Promise<number> => {
+    const result = await db.query(
+        `DELETE FROM squad_r6_players WHERE "ubisoftId" = $1`,
+        [ubisoftId]
+    );
+    return result.rowCount ?? 0;
 };
 
 /**
@@ -252,6 +368,32 @@ export const countGuildsTrackingR6Player = async (
 ): Promise<number> => {
     const result = await db.query(
         `SELECT COUNT(*)::int AS count FROM guild_r6_players WHERE "ubisoftId" = $1`,
+        [ubisoftId]
+    );
+    return result.rows[0]?.count ?? 0;
+};
+
+/**
+ * How many trackers this player has across *both* rosters.
+ *
+ * The question every "is anyone still interested in this player" caller actually
+ * means, and the only safe input to deleting the `r6_players` row — that row is
+ * the parent of both `guild_r6_players` and `squad_r6_players`, so deleting it
+ * cascades away enrolments in whichever roster the caller did not count.
+ *
+ * Concretely: `/r6-remove` in the last Discord server tracking somebody used to
+ * be enough to delete the row. Since 025 that would also silently un-track them
+ * for every Meeps space they linked from, which nobody in that Discord server
+ * has any business doing.
+ */
+export const countTrackersOfR6Player = async (
+    ubisoftId: string
+): Promise<number> => {
+    const result = await db.query(
+        `SELECT (
+             (SELECT COUNT(*) FROM guild_r6_players WHERE "ubisoftId" = $1)
+           + (SELECT COUNT(*) FROM squad_r6_players WHERE "ubisoftId" = $1)
+         )::int AS count`,
         [ubisoftId]
     );
     return result.rows[0]?.count ?? 0;
