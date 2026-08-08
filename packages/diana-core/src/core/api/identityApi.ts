@@ -359,8 +359,17 @@ export async function unlinkAccountRoute(
         // every interval for as long as the deployment lives.
         if (kind === 'r6_ubisoft') {
             await withdrawR6Enrolment(externalId).catch((err) =>
+                // `externalId` is passed as an argument rather than interpolated
+                // into the first one, and that is not style. The first argument
+                // to `console.error` is a *format string*: `util.format` reads
+                // `%s`/`%d`/`%o` in it as substitutions and consumes the
+                // arguments that follow. An id containing `%s` — and this one
+                // arrives on the request path — would swallow `err` into the
+                // message, so the failure being reported is the one that
+                // vanishes. (CodeQL js/tainted-format-string.)
                 console.error(
-                    `[${timestamp()}] [identity] Unlinked ${externalId} but could not withdraw their enrolment:`,
+                    `[${timestamp()}] [identity] Unlinked an account but could not withdraw its enrolment:`,
+                    externalId,
                     err
                 )
             );
@@ -720,7 +729,8 @@ async function enrolLinkedR6Player(
             profile.rank.rp
         ).catch((err) =>
             console.error(
-                `[identity] Failed to record initial rank for ${profile.ubisoftId}:`,
+                '[identity] Failed to record an initial rank for:',
+                profile.ubisoftId,
                 err
             )
         );
@@ -845,7 +855,8 @@ export async function linkR6Account(
             );
         } catch (err) {
             console.error(
-                `[${timestamp()}] [identity] Linked ${profile.ubisoftId} but could not enrol them for polling:`,
+                `[${timestamp()}] [identity] Linked an account but could not enrol it for polling:`,
+                profile.ubisoftId,
                 err
             );
         }
