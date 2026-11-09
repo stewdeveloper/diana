@@ -41,7 +41,7 @@
         "undici": "^6.27.0"
     },
     "devDependencies": {
-        "@anthropic-ai/claude-code": "^2.1.206",
+        "@anthropic-ai/claude-code": "^2.1.251",
         "@eslint/js": "^10.0.1",
         "@tsconfig/recommended": "^1.0.13",
         "@types/bcrypt": "^6.0.0",
